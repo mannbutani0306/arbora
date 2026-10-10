@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+build/
+.env*
+!.env.example
+ml/.env
+ml/data/
+ml/runs/
+.venv/
+__pycache__/
+*.pt
+*.safetensors
+.DS_Store
+*.log
