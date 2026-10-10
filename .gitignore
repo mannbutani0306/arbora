@@ -9,7 +9,9 @@ ml/data/
 ml/runs/
 .venv/
 __pycache__/
+*.py[cod]
 *.pt
 *.safetensors
 .DS_Store
 *.log
+node_modules
