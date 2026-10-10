@@ -7,6 +7,8 @@
 import { parse } from '../core/parser';
 import { lex } from '../core/lexer';
 import { ParseError, ParseResult, Token } from '../types/ast';
+import { classicalRepair } from '../core/classicalRepair';
+import { scoreRepair } from '../core/repairMetrics';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { callGateway, isAiAvailable } from './gatewayClient';
 
@@ -51,12 +53,29 @@ export interface RepairLogEntry {
   model: string;
   is_verified_success: boolean;
   user_id?: string | null;
+  error_type?: 'delete' | 'insert' | 'swap' | 'natural';
+  top1_correct?: boolean | null;
+  top3_correct?: boolean | null;
+  exact_match?: boolean | null;
+  ast_match?: boolean | null;
+  verified?: boolean;
+  edit_distance?: number | null;
+  source_hash?: string | null;
+  engine?: string;
+}
+
+export interface RepairContext {
+  groundTruth?: string;
+  errorType?: 'delete' | 'insert' | 'swap' | 'natural';
+  sourceCode?: string;
+  candidates?: RepairCandidate[];
+  engine?: string;
 }
 
 export interface RepairStatsSummary {
   totalAttempts: number;
   verifiedSuccessCount: number;
-  successRate: number; // 0 - 100
+  verifiedRate: number; // percent of attempts with at least one parser-valid candidate
   avgLatencyMs: number;
   avgCandidates: number;
   avgVerifiedCount: number;
@@ -137,81 +156,38 @@ export function extractErrorContexts(
     .join('\n\n');
 }
 
-/**
- * Deterministic classical heuristic recovery when AI is unavailable or fails verification.
- */
-export function classicalPanicModeRecovery(
-  sourceCode: string,
-  errors: ParseError[]
-): RepairCandidate {
-  let repaired = sourceCode;
-
-  // 1. Balance unclosed braces
-  const openBraces = (repaired.match(/\{/g) || []).length;
-  const closeBraces = (repaired.match(/\}/g) || []).length;
-  if (openBraces > closeBraces) {
-    const missing = openBraces - closeBraces;
-    repaired = repaired.trimEnd() + '\n' + '}'.repeat(missing) + '\n';
-  }
-
-  // 2. Fix unclosed parentheses in conditions / signatures
-  // e.g. if (x > 0 { -> if (x > 0) {
-  repaired = repaired.replace(/(\b(?:if|while|for)\s*\([^)\n{]+?)\s*\{/g, '$1) {');
-  // function signatures missing paren: int foo(int x { -> int foo(int x) {
-  repaired = repaired.replace(/(fn|int|float|void|char|bool)\s+([a-zA-Z_]\w*)\s*\(([^)\n{]+?)\s*\{/g, '$1 $2($3) {');
-
-  // 3. Fix trailing binary operators left hanging: x + \n -> x;\n
-  repaired = repaired.replace(/([=+\-*/%&|<>!]+)\s*(\n|\}|$)/g, ' 0;$2');
-
-  // 4. Missing semicolons at statement ends
-  const lines = repaired.split('\n');
-  const fixedLines = lines.map((line) => {
-    const trimmed = line.trim();
-    if (
-      trimmed.length > 0 &&
-      !trimmed.endsWith(';') &&
-      !trimmed.endsWith('{') &&
-      !trimmed.endsWith('}') &&
-      !trimmed.startsWith('//') &&
-      !trimmed.startsWith('/*') &&
-      (trimmed.startsWith('int ') ||
-        trimmed.startsWith('float ') ||
-        trimmed.startsWith('char ') ||
-        trimmed.startsWith('bool ') ||
-        trimmed.startsWith('return') ||
-        trimmed.startsWith('break') ||
-        trimmed.startsWith('continue') ||
-        trimmed.includes('='))
-    ) {
-      return line + ';';
-    }
-    return line;
-  });
-  repaired = fixedLines.join('\n');
-
-  // 5. Verify the heuristic fix
-  const parseCheck = parse(repaired);
-  const isZeroErrors = parseCheck.errors.length === 0;
-
-  return {
-    id: 'classical_fallback',
-    description: 'Classical panic-mode recovery',
-    edits: [
-      {
-        line: 1,
-        column: 1,
-        operation: 'replace',
-        text: repaired,
-      },
-    ],
-    repairedCode: repaired,
-    confidence: isZeroErrors ? 0.75 : 0.45,
-    rationale: 'Balanced delimiters and statement termination boundaries using compiler panic-mode heuristics.',
-    verified: isZeroErrors,
-    editDistance: calculateEditDistance(sourceCode, repaired),
-    remainingErrors: parseCheck.errors,
-    isFallback: true,
+function classicalCandidates(sourceCode: string, errors: ParseError[]): RepairCandidate[] {
+  const originalParseResult: ParseResult = {
+    ast: parse(sourceCode).ast,
+    tokens: lex(sourceCode).tokens,
+    errors,
+    diagnostics: [],
+    trace: [],
+    success: errors.length === 0,
   };
+  return classicalRepair(sourceCode, { originalParseResult }).map((candidate, index) => {
+    const parsed = parse(candidate.repairedCode);
+    return {
+      id: `classical_${index + 1}`,
+      description: 'Classical single-edit repair',
+      edits: candidate.edits.map((edit) => {
+        const token = originalParseResult.tokens[edit.tokenIndex];
+        return {
+          line: token?.line ?? 1,
+          column: token?.column ?? 1,
+          operation: edit.operation,
+          text: edit.text,
+        };
+      }),
+      repairedCode: candidate.repairedCode,
+      confidence: 1,
+      rationale: 'Found a deterministic edit that parses without errors.',
+      verified: true,
+      editDistance: calculateEditDistance(sourceCode, candidate.repairedCode),
+      remainingErrors: parsed.errors,
+      isFallback: true,
+    };
+  });
 }
 
 /**
@@ -280,9 +256,11 @@ export async function repairCode(params: {
   tokens: Token[];
   errors: ParseError[];
   userId?: string | null;
+  groundTruth?: string;
+  errorType?: RepairContext['errorType'];
 }): Promise<RepairResponse> {
   const startTime = performance.now();
-  const { sourceCode, tokens, errors, userId } = params;
+  const { sourceCode, tokens, errors, userId, groundTruth, errorType = 'natural' } = params;
 
   // If already zero errors, nothing to repair
   if (errors.length === 0) {
@@ -297,30 +275,32 @@ export async function repairCode(params: {
   }
 
   if (!isAiAvailable()) {
-    const fallback = classicalPanicModeRecovery(sourceCode, errors);
+    const candidates = classicalCandidates(sourceCode, errors);
+    const fallback = candidates[0] ?? null;
     const latency = Math.round(performance.now() - startTime);
 
-    logRepairAttempt(
+    await logRepairAttempt(
       {
         source_length: sourceCode.length,
         error_count: errors.length,
-        candidate_count: 1,
-        verified_count: fallback.verified ? 1 : 0,
+        candidate_count: candidates.length,
+        verified_count: candidates.filter((candidate) => candidate.verified).length,
         latency_ms: latency,
-        model: 'classical-heuristic',
-        is_verified_success: fallback.verified,
+        model: 'classical',
+        is_verified_success: Boolean(fallback),
       },
-      userId
+      userId,
+      { sourceCode, groundTruth, errorType, candidates, engine: 'classical' }
     );
 
     return {
-      candidates: [fallback],
-      verifiedCandidate: fallback.verified ? fallback : null,
+      candidates,
+      verifiedCandidate: fallback,
       bestCandidate: fallback,
       fellBackToClassical: true,
-      message: 'Fell back to classical panic-mode recovery.',
+      message: fallback ? 'Used deterministic classical repair.' : 'No verified classical repair found.',
       latencyMs: latency,
-      model: 'classical-heuristic',
+      model: 'classical',
     };
   }
 
@@ -376,33 +356,34 @@ export async function repairCode(params: {
       }
     }
 
-    // If still none verified, fall back to classical panic-mode recovery
+    // If no AI candidate verifies, use deterministic classical repair.
     let fellBack = false;
     let fallbackMessage: string | undefined = undefined;
 
     if (verifiedCount === 0) {
       fellBack = true;
-      fallbackMessage = 'Fell back to classical panic-mode recovery.';
-      const fallback = classicalPanicModeRecovery(sourceCode, errors);
+      fallbackMessage = 'Fell back to deterministic classical repair.';
+      const fallbackCandidates = classicalCandidates(sourceCode, errors);
       // Prepend or add fallback candidate
-      candidates = [fallback, ...candidates];
+      candidates = [...fallbackCandidates, ...candidates];
     }
 
     const latency = Math.round(performance.now() - startTime);
     const verifiedCandidate = candidates.find((c) => c.verified) || null;
     const bestCandidate = candidates[0] || null;
 
-    logRepairAttempt(
+    await logRepairAttempt(
       {
         source_length: sourceCode.length,
         error_count: errors.length,
         candidate_count: candidates.length,
-        verified_count: verifiedCount > 0 ? verifiedCount : (bestCandidate?.verified ? 1 : 0),
+        verified_count: candidates.filter((candidate) => candidate.verified).length,
         latency_ms: latency,
         model: MODEL_NAME,
         is_verified_success: Boolean(verifiedCandidate),
       },
-      userId
+      userId,
+      { sourceCode, groundTruth, errorType, candidates, engine: fellBack ? 'classical' : 'ai-gateway' }
     );
 
     return {
@@ -415,150 +396,221 @@ export async function repairCode(params: {
       model: MODEL_NAME,
     };
   } catch {
-    // In case of API failure / network outage, fall back to classical recovery
-    const fallback = classicalPanicModeRecovery(sourceCode, errors);
+    // In case of API failure / network outage, use deterministic classical repair.
+    const candidates = classicalCandidates(sourceCode, errors);
+    const fallback = candidates[0] ?? null;
     const latency = Math.round(performance.now() - startTime);
 
-    logRepairAttempt(
+    await logRepairAttempt(
       {
         source_length: sourceCode.length,
         error_count: errors.length,
-        candidate_count: 1,
-        verified_count: fallback.verified ? 1 : 0,
+        candidate_count: candidates.length,
+        verified_count: candidates.filter((candidate) => candidate.verified).length,
         latency_ms: latency,
-        model: 'classical-heuristic',
-        is_verified_success: fallback.verified,
+        model: 'classical',
+        is_verified_success: Boolean(fallback),
       },
-      userId
+      userId,
+      { sourceCode, groundTruth, errorType, candidates, engine: 'classical' }
     );
 
     return {
-      candidates: [fallback],
-      verifiedCandidate: fallback.verified ? fallback : null,
+      candidates,
+      verifiedCandidate: fallback,
       bestCandidate: fallback,
       fellBackToClassical: true,
-      message: 'Fell back to classical panic-mode recovery.',
+      message: fallback ? 'Used deterministic classical repair.' : 'No verified classical repair found.',
       latencyMs: latency,
-      model: 'classical-heuristic',
+      model: 'classical',
     };
   }
 }
 
-/**
- * Logs every repair attempt (source_length, error_count, candidate_count, verified_count, latency_ms, model)
- * For signed-in users, logs to Supabase benchmark_runs; for guests keeps stats in localStorage.
- */
-export function logRepairAttempt(
-  entry: Omit<RepairLogEntry, 'id' | 'timestamp'>,
-  userId?: string | null
-): void {
-  const logItem: RepairLogEntry = {
-    ...entry,
-    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    timestamp: Date.now(),
-    user_id: userId || null,
-  };
-
-  inMemoryLogs = [logItem, ...inMemoryLogs].slice(0, 100);
-
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const existingRaw = localStorage.getItem(STORAGE_KEY);
-      const existingList: RepairLogEntry[] = existingRaw ? JSON.parse(existingRaw) : [];
-      const updated = [logItem, ...existingList].slice(0, 100);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    }
-  } catch {
-    // Storage quota or disabled in iframe
-  }
-
-  // 2. If signed-in user and Supabase is configured, record to benchmark_runs
-  if (userId && isSupabaseConfigured) {
-    void (async () => {
-      try {
-        await supabase.from('benchmark_runs').insert({
-          user_id: userId,
-          suite_name: 'ai_repair',
-          results: {
-            source_length: entry.source_length,
-            error_count: entry.error_count,
-            candidate_count: entry.candidate_count,
-            verified_count: entry.verified_count,
-            latency_ms: entry.latency_ms,
-            model: entry.model,
-            is_verified_success: entry.is_verified_success,
-          },
-        });
-      } catch {
-        // Non-blocking log
-      }
-    })();
-  }
+async function hashSource(source: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * Returns repair statistics summary for Metrics tab and Benchmarks page
- */
-export function getRepairStats(): RepairStatsSummary {
-  try {
-    let logs: RepairLogEntry[] = inMemoryLogs;
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        logs = JSON.parse(raw);
-      }
-    }
-
-    if (logs.length === 0) {
-      return {
-        totalAttempts: 0,
-        verifiedSuccessCount: 0,
-        successRate: 0,
-        avgLatencyMs: 0,
-        avgCandidates: 0,
-        avgVerifiedCount: 0,
-        logs: [],
-      };
-    }
-
-    const total = logs.length;
-    const verifiedSuccess = logs.filter((l) => l.is_verified_success).length;
-    const sumLatency = logs.reduce((acc, l) => acc + (l.latency_ms || 0), 0);
-    const sumCandidates = logs.reduce((acc, l) => acc + (l.candidate_count || 0), 0);
-    const sumVerified = logs.reduce((acc, l) => acc + (l.verified_count || 0), 0);
-
-    return {
-      totalAttempts: total,
-      verifiedSuccessCount: verifiedSuccess,
-      successRate: Math.round((verifiedSuccess / total) * 100),
-      avgLatencyMs: Math.round(sumLatency / total),
-      avgCandidates: Number((sumCandidates / total).toFixed(1)),
-      avgVerifiedCount: Number((sumVerified / total).toFixed(1)),
-      logs,
-    };
-  } catch {
+function summarizeRepairLogs(logs: RepairLogEntry[]): RepairStatsSummary {
+  const total = logs.length;
+  if (total === 0) {
     return {
       totalAttempts: 0,
       verifiedSuccessCount: 0,
-      successRate: 0,
+      verifiedRate: 0,
       avgLatencyMs: 0,
       avgCandidates: 0,
       avgVerifiedCount: 0,
       logs: [],
     };
   }
+  const verifiedSuccess = logs.filter((log) => log.is_verified_success).length;
+  return {
+    totalAttempts: total,
+    verifiedSuccessCount: verifiedSuccess,
+    verifiedRate: Math.round((verifiedSuccess / total) * 100),
+    avgLatencyMs: Math.round(logs.reduce((sum, log) => sum + (log.latency_ms || 0), 0) / total),
+    avgCandidates: Number((logs.reduce((sum, log) => sum + (log.candidate_count || 0), 0) / total).toFixed(1)),
+    avgVerifiedCount: Number((logs.reduce((sum, log) => sum + (log.verified_count || 0), 0) / total).toFixed(1)),
+    logs,
+  };
 }
 
-/**
- * Clears repair stats if requested
- */
-export function clearRepairStats(): void {
-  inMemoryLogs = [];
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEY);
+export async function logRepairAttempt(
+  entry: Omit<RepairLogEntry, 'id' | 'timestamp'>,
+  userId?: string | null,
+  context: RepairContext = {}
+): Promise<void> {
+  const candidates = context.candidates ?? [];
+  const score = context.groundTruth === undefined
+    ? null
+    : scoreRepair(candidates, context.groundTruth);
+  let sourceHash: string | null = null;
+  if (context.sourceCode !== undefined) {
+    try {
+      sourceHash = await hashSource(context.sourceCode);
+    } catch (error) {
+      console.error('Unable to hash source for repair logging.', error);
     }
-  } catch (error) {
-    console.warn('Unable to clear persisted repair stats.', error);
   }
+  let authenticatedUserId = userId || null;
+  if (!authenticatedUserId && isSupabaseConfigured) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.error('Unable to resolve the repair event owner.', error);
+      return;
+    }
+    authenticatedUserId = data.session?.user.id ?? null;
+  }
+  const topCandidate = candidates[0];
+  const logItem: RepairLogEntry = {
+    ...entry,
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: Date.now(),
+    user_id: authenticatedUserId,
+    error_type: context.errorType ?? 'natural',
+    top1_correct: score?.top1Exact ?? null,
+    top3_correct: score?.top3Exact ?? null,
+    exact_match: score?.top1Exact ?? null,
+    ast_match: score?.top1AstMatch ?? null,
+    verified: candidates.some((candidate) => candidate.verified),
+    edit_distance: topCandidate?.editDistance ?? null,
+    source_hash: sourceHash,
+    engine: context.engine ?? 'ai-gateway',
+  };
+  inMemoryLogs = [logItem, ...inMemoryLogs].slice(0, 100);
+
+  if (authenticatedUserId && isSupabaseConfigured) {
+    const { error } = await supabase.from('repair_events').insert({
+      user_id: authenticatedUserId,
+      error_type: logItem.error_type,
+      candidates_count: entry.candidate_count,
+      verified_count: entry.verified_count,
+      top1_correct: logItem.top1_correct,
+      top3_correct: logItem.top3_correct,
+      latency_ms: entry.latency_ms,
+      model: entry.model,
+      engine: logItem.engine,
+      exact_match: logItem.exact_match,
+      ast_match: logItem.ast_match,
+      verified: logItem.verified,
+      edit_distance: logItem.edit_distance,
+      source_hash: logItem.source_hash,
+    });
+    if (error) {
+      console.error('Unable to persist repair event.', error);
+      return;
+    }
+    return;
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const existingRaw = localStorage.getItem(STORAGE_KEY);
+      const existingList: RepairLogEntry[] = existingRaw ? JSON.parse(existingRaw) : [];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([logItem, ...existingList].slice(0, 100)));
+    } catch (error) {
+      console.error('Unable to persist guest repair event locally.', error);
+    }
+  }
+}
+
+export async function getRepairStats(): Promise<RepairStatsSummary> {
+  if (isSupabaseConfigured) {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const userId = sessionData.session?.user.id;
+    if (userId) {
+      const rows: Array<{
+        id: string;
+        created_at: string;
+        error_type: RepairLogEntry['error_type'];
+        candidates_count: number;
+        verified_count: number;
+        top1_correct: boolean | null;
+        top3_correct: boolean | null;
+        latency_ms: number;
+        model: string;
+        engine: string;
+        exact_match: boolean | null;
+        ast_match: boolean | null;
+        verified: boolean;
+        edit_distance: number | null;
+        source_hash: string | null;
+        user_id: string;
+      }> = [];
+      const pageSize = 1000;
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await supabase
+          .from('repair_events')
+          .select('id,created_at,error_type,candidates_count,verified_count,top1_correct,top3_correct,latency_ms,model,engine,exact_match,ast_match,verified,edit_distance,source_hash,user_id')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + pageSize - 1);
+        if (error) throw error;
+        rows.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+      }
+      const logs = rows.map((row) => ({
+        id: row.id,
+        timestamp: Date.parse(row.created_at),
+        source_length: 0,
+        error_count: 0,
+        candidate_count: row.candidates_count,
+        verified_count: row.verified_count,
+        latency_ms: row.latency_ms,
+        model: row.model,
+        is_verified_success: row.verified,
+        user_id: row.user_id,
+        error_type: row.error_type,
+        top1_correct: row.top1_correct,
+        top3_correct: row.top3_correct,
+        exact_match: row.exact_match,
+        ast_match: row.ast_match,
+        verified: row.verified,
+        edit_distance: row.edit_distance,
+        source_hash: row.source_hash,
+        engine: row.engine,
+      } satisfies RepairLogEntry));
+      return summarizeRepairLogs(logs);
+    }
+  }
+
+  if (typeof localStorage === 'undefined') return summarizeRepairLogs(inMemoryLogs);
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return summarizeRepairLogs(raw ? JSON.parse(raw) as RepairLogEntry[] : inMemoryLogs);
+}
+
+export async function clearRepairStats(): Promise<void> {
+  inMemoryLogs = [];
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY);
+  if (!isSupabaseConfigured) return;
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  const userId = sessionData.session?.user.id;
+  if (!userId) return;
+  const { error } = await supabase.from('repair_events').delete().eq('user_id', userId);
+  if (error) throw error;
 }

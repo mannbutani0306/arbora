@@ -1340,7 +1340,7 @@ export function Playground() {
                         {/* Fallback message if classical recovery fallback triggered */}
                         {repairResponse?.fellBackToClassical && !isRepairing && (
                           <div className="px-3 py-2 bg-stone-100 border border-stone-200 text-xs text-stone-700 rounded-lg flex items-center justify-between">
-                            <span>Fell back to classical panic-mode recovery.</span>
+                            <span>Fell back to deterministic classical repair.</span>
                             <span className="text-[10px] font-mono text-stone-500">Heuristic</span>
                           </div>
                         )}

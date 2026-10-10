@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   calculateEditDistance,
   verifyAndRankCandidates,
-  classicalPanicModeRecovery,
   logRepairAttempt,
   getRepairStats,
   clearRepairStats,
@@ -10,6 +9,7 @@ import {
 } from './repair';
 import { lex } from '../core/lexer';
 import { parse } from '../core/parser';
+import { classicalRepair } from '../core/classicalRepair';
 
 vi.mock('./gatewayClient', () => ({
   callGateway: vi.fn(),
@@ -17,8 +17,8 @@ vi.mock('./gatewayClient', () => ({
 }));
 
 describe('AI Repair Engine', () => {
-  beforeEach(() => {
-    clearRepairStats();
+  beforeEach(async () => {
+    await clearRepairStats();
   });
 
   describe('Edit distance', () => {
@@ -93,27 +93,40 @@ describe('AI Repair Engine', () => {
     });
   });
 
-  describe('Classical panic-mode recovery fallback', () => {
-    it('balances unclosed braces', () => {
-      const broken = 'int main() {\n    int a = 1;\n';
-      const parsed = parse(broken);
-      const fallback = classicalPanicModeRecovery(broken, parsed.errors);
-      expect(fallback.repairedCode).toContain('}');
-      expect(fallback.isFallback).toBe(true);
+  describe('Classical bounded repair', () => {
+    it('repairs a missing semicolon', () => {
+      const result = classicalRepair('int run() { return 5 }');
+      expect(result.some(({ repairedCode }) => parse(repairedCode).errors.length === 0)).toBe(true);
     });
 
-    it('balances unclosed parentheses in if statement', () => {
-      const broken = 'int test() {\n    if (x > 0 {\n        return 1;\n    }\n    return 0;\n}';
-      const parsed = parse(broken);
-      const fallback = classicalPanicModeRecovery(broken, parsed.errors);
-      expect(fallback.repairedCode).toContain('if (x > 0) {');
+    it('repairs a missing close parenthesis', () => {
+      const result = classicalRepair('int run() { if (1 { return 1; } }');
+      expect(result.some(({ repairedCode }) => repairedCode.includes(')') && parse(repairedCode).errors.length === 0)).toBe(true);
     });
 
-    it('adds missing semicolons', () => {
-      const broken = 'int run() {\n    int a = 5\n    return a;\n}';
-      const parsed = parse(broken);
-      const fallback = classicalPanicModeRecovery(broken, parsed.errors);
-      expect(fallback.repairedCode).toContain('int a = 5;');
+    it('repairs a missing close brace', () => {
+      const result = classicalRepair('int run() { return 5;');
+      expect(result.some(({ repairedCode }) => parse(repairedCode).errors.length === 0)).toBe(true);
+    });
+
+    it('repairs an extra close parenthesis', () => {
+      const result = classicalRepair('int run()) { return 5; }');
+      expect(result.some(({ repairedCode }) => parse(repairedCode).errors.length === 0)).toBe(true);
+    });
+
+    it('keeps increment operators and inserts the missing semicolon', () => {
+      const original = 'int run() { int i = 0; i++; }';
+      const broken = original.replace('i++;', 'i++');
+      const result = classicalRepair(broken);
+      expect(result.some(({ repairedCode }) =>
+        parse(repairedCode).errors.length === 0 &&
+        lex(repairedCode).tokens.some((token) => token.lexeme === '++')
+      )).toBe(true);
+    });
+
+    it('does not alter a valid increment statement', () => {
+      const source = 'int run() { int i = 0; i++; return i; }';
+      expect(classicalRepair(source)).toEqual([]);
     });
   });
 
@@ -130,10 +143,10 @@ describe('AI Repair Engine', () => {
   });
 
   describe('Repair Stats Logging', () => {
-    it('logs attempts and aggregates stats correctly', () => {
-      expect(getRepairStats().totalAttempts).toBe(0);
+    it('logs attempts and aggregates stats correctly', async () => {
+      expect((await getRepairStats()).totalAttempts).toBe(0);
 
-      logRepairAttempt({
+      await logRepairAttempt({
         source_length: 50,
         error_count: 2,
         candidate_count: 3,
@@ -143,7 +156,7 @@ describe('AI Repair Engine', () => {
         is_verified_success: true,
       });
 
-      logRepairAttempt({
+      await logRepairAttempt({
         source_length: 80,
         error_count: 1,
         candidate_count: 2,
@@ -153,10 +166,10 @@ describe('AI Repair Engine', () => {
         is_verified_success: false,
       });
 
-      const stats = getRepairStats();
+      const stats = await getRepairStats();
       expect(stats.totalAttempts).toBe(2);
       expect(stats.verifiedSuccessCount).toBe(1);
-      expect(stats.successRate).toBe(50);
+      expect(stats.verifiedRate).toBe(50);
       expect(stats.avgLatencyMs).toBe(200);
       expect(stats.avgCandidates).toBe(2.5);
       expect(stats.logs).toHaveLength(2);

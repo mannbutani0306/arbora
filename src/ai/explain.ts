@@ -145,7 +145,7 @@ export async function storeCachedExplanation(
           level,
           content,
         },
-        { onConflict: 'cache_key,level' }
+        { onConflict: 'cache_key,level', ignoreDuplicates: true }
       ).abortSignal(controller.signal);
 
       clearTimeout(timer);

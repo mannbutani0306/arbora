@@ -73,12 +73,18 @@ export interface SampleRecord {
   difficulty: string;
 }
 
-// Helper: 8-character random share slug
+// Generate URL-safe slugs with cryptographically secure randomness.
 export function generateShareSlug(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let slug = '';
-  for (let i = 0; i < 8; i++) {
-    slug += chars.charAt(Math.floor(Math.random() * chars.length));
+  const randomValues = new Uint8Array(16);
+  while (slug.length < 10) {
+    crypto.getRandomValues(randomValues);
+    for (const value of randomValues) {
+      if (value >= 252) continue;
+      slug += chars[value % chars.length];
+      if (slug.length === 10) break;
+    }
   }
   return slug;
 }

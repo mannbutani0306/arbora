@@ -25,7 +25,7 @@ Create `supabase/.env.local`:
 
 ```env
 GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-3.8-flash
+GEMINI_MODEL=<model-id>
 ALLOWED_ORIGINS=http://localhost:3000
 ```
 

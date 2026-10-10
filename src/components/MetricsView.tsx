@@ -22,6 +22,7 @@ import { parse } from '../core/parser';
 import { compareASTs } from '../core/compare';
 import { Tooltip } from './Tooltip';
 import { useToast } from '../lib/toast';
+import type { RepairStatsSummary } from '../ai/repair';
 
 interface MetricsViewProps {
   ast: ASTNode | null;
@@ -43,7 +44,7 @@ const DEFAULT_DIFF_CODE_B = `int factorial(int n) {
 `;
 
 export function MetricsView({ ast, code }: MetricsViewProps) {
-  const toast = useToast();
+  const { info: toastInfo, error: toastError } = useToast();
 
   // Metrics from current AST
   const metrics = useMemo(() => {
@@ -51,7 +52,28 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
   }, [ast]);
 
   // AI Repair stats from localStorage / memory
-  const [repairStats, setRepairStats] = useState(() => getRepairStats());
+  const [repairStats, setRepairStats] = useState<RepairStatsSummary>({
+    totalAttempts: 0,
+    verifiedSuccessCount: 0,
+    verifiedRate: 0,
+    avgLatencyMs: 0,
+    avgCandidates: 0,
+    avgVerifiedCount: 0,
+    logs: [],
+  });
+
+  React.useEffect(() => {
+    let active = true;
+    void getRepairStats()
+      .then((stats) => {
+        if (active) setRepairStats(stats);
+      })
+      .catch((error: unknown) => {
+        console.error('Unable to load repair statistics.', error);
+        toastError('Unable to load repair statistics');
+      });
+    return () => { active = false; };
+  }, [toastError]);
 
   // AST Diff state
   const [diffCodeA, setDiffCodeA] = useState<string>(code || '');
@@ -81,10 +103,15 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
     }
   }, [diffCodeA, diffCodeB]);
 
-  const handleClearRepairStats = () => {
-    clearRepairStats();
-    setRepairStats(getRepairStats());
-    toast.info('Cleared repair stats');
+  const handleClearRepairStats = async () => {
+    try {
+      await clearRepairStats();
+      setRepairStats(await getRepairStats());
+      toastInfo('Cleared repair stats');
+    } catch (error) {
+      console.error('Unable to clear repair statistics.', error);
+      toastError('Unable to clear repair statistics');
+    }
   };
 
   const applyDiffPreset = (type: 'loop' | 'operator' | 'function') => {
@@ -95,7 +122,7 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
     } else if (type === 'function') {
       setDiffCodeB(`${diffCodeA}\n\nint helper(int x) {\n    return x * 2;\n}`);
     }
-    toast.info('Applied diff preset');
+    toastInfo('Applied diff preset');
   };
 
   return (
@@ -251,7 +278,7 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
               <div className="p-2.5 bg-emerald-50/40 rounded-lg border border-emerald-100">
                 <div className="text-[10px] text-[#059669] mb-1">Verified rate</div>
                 <div className="text-base font-mono font-semibold text-[#059669]">
-                  {repairStats.successRate}%
+                  {repairStats.verifiedRate}%
                 </div>
               </div>
               <div className="p-2.5 bg-stone-50 rounded-lg border border-[#E7E5E4]">

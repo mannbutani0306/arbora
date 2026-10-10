@@ -9,7 +9,6 @@ import { AuthenticationError, getAuthenticatedUserId } from '../_shared/auth.ts'
 import { getAllowedOrigins, getCorsHeaders, isOriginAllowed } from '../_shared/cors.ts';
 import { enforceRateLimit, RateLimitError } from '../_shared/rateLimit.ts';
 
-const DEFAULT_MODEL = 'gemini-3.8-flash';
 const MAX_BODY_BYTES = 20 * 1024;
 const MODEL_TIMEOUT_MS = 25_000;
 
@@ -295,7 +294,8 @@ async function generateModelJson(request: GatewayRequest): Promise<unknown> {
   const apiKey = Deno.env.get('GEMINI_API_KEY');
   if (!apiKey) throw new Error('AI model is not configured.');
 
-  const model = Deno.env.get('GEMINI_MODEL')?.trim() || DEFAULT_MODEL;
+  const model = Deno.env.get('GEMINI_MODEL')?.trim();
+  if (!model) throw new Error('AI model is not configured.');
   const modelRequest = getModelRequest(request);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();
@@ -369,7 +369,8 @@ Deno.serve(async (request) => {
       Deno.env.get('SUPABASE_URL')
         && Deno.env.get('SUPABASE_ANON_KEY')
         && Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-        && Deno.env.get('GEMINI_API_KEY'),
+        && Deno.env.get('GEMINI_API_KEY')
+        && Deno.env.get('GEMINI_MODEL'),
     );
     return jsonResponse(
       configured ? { status: 'ok' } : { code: 'MODEL_ERROR', message: 'AI gateway is not configured.' },

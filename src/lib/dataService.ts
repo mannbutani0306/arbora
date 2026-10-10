@@ -72,8 +72,8 @@ export async function saveAnalysis(
   const payload = {
     title: input.title || 'Untitled AST',
     source_code: input.source_code,
-    language: input.language || 'c',
-    mode: input.mode || 'standard',
+    language: input.language || 'minic',
+    mode: input.mode || 'strict',
     tokens: input.tokens || null,
     ast: input.ast,
     errors: input.errors || null,
@@ -206,9 +206,8 @@ export async function setPublic(
   id: string,
   isPublic: boolean
 ): Promise<{ share_slug: string | null }> {
-  const share_slug = isPublic ? generateShareSlug() : null;
-
   if (!isSupabaseConfigured) {
+    const share_slug = isPublic ? generateShareSlug() : null;
     const local = getLocalAnalyses();
     const target = local.find((a) => a.id === id);
     if (target) {
@@ -219,17 +218,22 @@ export async function setPublic(
     return { share_slug };
   }
 
-  const { error } = await supabase
-    .from('analyses')
-    .update({
-      is_public: isPublic,
-      share_slug: share_slug,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id);
+  const attempts = isPublic ? 5 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const share_slug = isPublic ? generateShareSlug() : null;
+    const { error } = await supabase
+      .from('analyses')
+      .update({
+        is_public: isPublic,
+        share_slug,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
 
-  if (error) throw error;
-  return { share_slug };
+    if (!error) return { share_slug };
+    if (error.code !== '23505' || attempt === attempts - 1) throw error;
+  }
+  throw new Error('Unable to create a unique share link after five attempts.');
 }
 
 /**

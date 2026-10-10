@@ -145,21 +145,21 @@ export function Benchmarks() {
     return summary.items.filter((it) => it.errorType === filterType);
   }, [summary, filterType]);
 
-  // Chart data: Error type accuracy
+  // Chart data: top-1 exact source correctness by error type.
   const errorTypeChartData = useMemo(() => {
     if (!summary) return [];
     return [
       {
         type: 'Delete',
-        accuracy: summary.aiRepair.accuracyByErrorType.delete,
+        exactRate: summary.aiRepair.top1ExactRateByErrorType.delete,
       },
       {
         type: 'Insert',
-        accuracy: summary.aiRepair.accuracyByErrorType.insert,
+        exactRate: summary.aiRepair.top1ExactRateByErrorType.insert,
       },
       {
         type: 'Swap',
-        accuracy: summary.aiRepair.accuracyByErrorType.swap,
+        exactRate: summary.aiRepair.top1ExactRateByErrorType.swap,
       },
     ];
   }, [summary]);
@@ -190,7 +190,7 @@ export function Benchmarks() {
         run: `Run #${idx + 1}`,
         time: dateLabel,
         verifiedRate: res?.aiRepair?.verifiedRate ?? 0,
-        top1Accuracy: res?.aiRepair?.top1Accuracy ?? 0,
+        top1ExactRate: res?.aiRepair?.top1ExactRate ?? 0,
         f1Score: res?.neuralAst?.avgF1 ? Math.round(res.neuralAst.avgF1 * 100) : 0,
       };
     });
@@ -303,7 +303,7 @@ export function Benchmarks() {
             </Tooltip>
 
             {/* 2. AI repair: top-1, top-3, verified rate, avg latency */}
-            <Tooltip content="AI syntax repair accuracy: Top-1 candidate and Verified rate across mutated programs" position="top">
+            <Tooltip content="Top-1 and top-3 exact source correctness are separate from parser verification." position="top">
               <div className="bg-white rounded-xl border border-[#E7E5E4] p-3.5 shadow-2xs text-left w-full">
                 <div className="flex items-center justify-between text-[11px] font-medium text-[#78716C] mb-1">
                   <span>AI repair verified</span>
@@ -313,13 +313,13 @@ export function Benchmarks() {
                   {summary.aiRepair.verifiedRate}%
                 </div>
                 <div className="text-[11px] text-[#78716C] font-mono mt-0.5">
-                  Top-1: {summary.aiRepair.top1Accuracy}% | Top-3: {summary.aiRepair.top3Accuracy}%
+                  Top-1 exact: {summary.aiRepair.top1ExactRate}% | Top-3 exact: {summary.aiRepair.top3ExactRate}%
                 </div>
               </div>
             </Tooltip>
 
             {/* 3. Neural AST: avg TED, avg F1, exact match, validity */}
-            <Tooltip content="Neural AST structural accuracy: Tree Edit Distance and F1 score against ground-truth" position="top">
+            <Tooltip content="Neural AST structural match: Tree Edit Distance and F1 score against ground-truth" position="top">
               <div className="bg-white rounded-xl border border-[#E7E5E4] p-3.5 shadow-2xs text-left w-full">
                 <div className="flex items-center justify-between text-[11px] font-medium text-[#78716C] mb-1">
                   <span>Neural AST F1</span>
@@ -379,7 +379,7 @@ export function Benchmarks() {
                       }}
                       formatter={(val: any) => [`${val}%`, 'Accuracy']}
                     />
-                    <Bar dataKey="accuracy" fill="#059669" radius={[4, 4, 0, 0]} barSize={36} />
+                    <Bar dataKey="exactRate" fill="#059669" radius={[4, 4, 0, 0]} barSize={36} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -466,7 +466,7 @@ export function Benchmarks() {
                     />
                     <Line
                       type="monotone"
-                      dataKey="top1Accuracy"
+                      dataKey="top1ExactRate"
                       name="Top-1 Acc %"
                       stroke="#6366F1"
                       strokeWidth={2}

@@ -6,7 +6,7 @@
  * - Implements rate limit retry with exponential backoff
  * - Evaluates:
  *   - Classical: valid code success rate, avg parse ms
- *   - AI repair: top-1 & top-3 accuracy, verified rate, avg latency, accuracy by error type
+ *   - AI repair: top-1 & top-3 exact correctness, verified rate, avg latency, exact correctness by error type
  *   - Neural AST: avg TED, avg F1, exact-match rate, validity rate
  *   - Ablation: success rate without vs with AI repair
  */
@@ -17,6 +17,7 @@ import { injectSingleTokenError, ErrorInjectionType } from './errorInjector';
 import { repairCode, RepairResponse } from '../ai/repair';
 import { generateNeuralAst, NeuralAstResult } from '../ai/neuralAst';
 import { compareASTs, ComparisonMetrics } from './compare';
+import { scoreRepair } from './repairMetrics';
 import { listSamples } from '../lib/dataService';
 import { SampleRecord } from '../lib/supabase';
 
@@ -38,8 +39,8 @@ export interface BenchmarkItemResult {
   classicalWithoutAiSuccess: boolean;
 
   // AI Repair on mutated code
-  aiRepairTop1Acc: boolean;
-  aiRepairTop3Acc: boolean;
+  aiRepairTop1Exact: boolean;
+  aiRepairTop3Exact: boolean;
   aiRepairVerified: boolean;
   aiRepairLatencyMs: number;
   aiRepairCandidateCount: number;
@@ -62,11 +63,11 @@ export interface BenchmarkSuiteSummary {
     avgParseMs: number;
   };
   aiRepair: {
-    top1Accuracy: number; // 0 - 100
-    top3Accuracy: number; // 0 - 100
+    top1ExactRate: number; // 0 - 100
+    top3ExactRate: number; // 0 - 100
     verifiedRate: number; // 0 - 100
     avgLatencyMs: number;
-    accuracyByErrorType: {
+    top1ExactRateByErrorType: {
       delete: number; // 0 - 100
       insert: number; // 0 - 100
       swap: number; // 0 - 100
@@ -225,8 +226,8 @@ export async function runBenchmarkSuite(params: {
     const withoutAiSuccess = mutatedParse.success && mutatedParse.errors.length === 0;
 
     // 4. AI Repair on mutated code (with retry on rate limits)
-    let aiRepairTop1Acc = false;
-    let aiRepairTop3Acc = false;
+    let aiRepairTop1Exact = false;
+    let aiRepairTop3Exact = false;
     let aiRepairVerified = false;
     let aiRepairLatencyMs = 0;
     let aiRepairCandidateCount = 0;
@@ -238,6 +239,8 @@ export async function runBenchmarkSuite(params: {
           tokens: mutatedParse.tokens,
           errors: mutatedParse.errors,
           userId,
+          groundTruth: item.code,
+          errorType: injection.errorType,
         })
       );
 
@@ -245,12 +248,9 @@ export async function runBenchmarkSuite(params: {
       aiRepairCandidateCount = repairRes.candidates.length;
       aiRepairVerified = Boolean(repairRes.verifiedCandidate);
 
-      if (repairRes.candidates.length > 0) {
-        aiRepairTop1Acc = Boolean(repairRes.candidates[0].verified);
-        aiRepairTop3Acc = repairRes.candidates
-          .slice(0, 3)
-          .some((c) => Boolean(c.verified));
-      }
+      const repairScore = scoreRepair(repairRes.candidates, item.code);
+      aiRepairTop1Exact = repairScore.top1Exact;
+      aiRepairTop3Exact = repairScore.top3Exact;
     } catch {
       // In case of network / timeout, defaults remain false
     }
@@ -291,8 +291,8 @@ export async function runBenchmarkSuite(params: {
       errorType: injection.errorType,
       errorDescription: injection.description,
       classicalWithoutAiSuccess: withoutAiSuccess,
-      aiRepairTop1Acc,
-      aiRepairTop3Acc,
+      aiRepairTop1Exact,
+      aiRepairTop3Exact,
       aiRepairVerified,
       aiRepairLatencyMs,
       aiRepairCandidateCount,
@@ -353,39 +353,39 @@ export async function runBenchmarkSuite(params: {
   const avgParseMs = Number((totalParseMs / totalCount).toFixed(2));
 
   // AI Repair
-  const top1Count = results.filter((r) => r.aiRepairTop1Acc).length;
-  const top3Count = results.filter((r) => r.aiRepairTop3Acc).length;
+  const top1Count = results.filter((r) => r.aiRepairTop1Exact).length;
+  const top3Count = results.filter((r) => r.aiRepairTop3Exact).length;
   const verifiedCount = results.filter((r) => r.aiRepairVerified).length;
   const totalLatencyMs = results.reduce((acc, r) => acc + r.aiRepairLatencyMs, 0);
 
-  const top1Accuracy = Math.round((top1Count / totalCount) * 100);
-  const top3Accuracy = Math.round((top3Count / totalCount) * 100);
+  const top1ExactRate = Math.round((top1Count / totalCount) * 100);
+  const top3ExactRate = Math.round((top3Count / totalCount) * 100);
   const verifiedRate = Math.round((verifiedCount / totalCount) * 100);
   const avgLatencyMs = Math.round(totalLatencyMs / totalCount);
 
-  // AI Accuracy by error type
+  // Exact source correctness by error type; parser validity is reported separately.
   const deleteItems = results.filter((r) => r.errorType === 'delete');
   const insertItems = results.filter((r) => r.errorType === 'insert');
   const swapItems = results.filter((r) => r.errorType === 'swap');
 
-  const accuracyByErrorType = {
+  const top1ExactRateByErrorType = {
     delete: deleteItems.length
       ? Math.round(
-          (deleteItems.filter((r) => r.aiRepairVerified).length /
+          (deleteItems.filter((r) => r.aiRepairTop1Exact).length /
             deleteItems.length) *
             100
         )
       : 0,
     insert: insertItems.length
       ? Math.round(
-          (insertItems.filter((r) => r.aiRepairVerified).length /
+          (insertItems.filter((r) => r.aiRepairTop1Exact).length /
             insertItems.length) *
             100
         )
       : 0,
     swap: swapItems.length
       ? Math.round(
-          (swapItems.filter((r) => r.aiRepairVerified).length /
+          (swapItems.filter((r) => r.aiRepairTop1Exact).length /
             swapItems.length) *
             100
         )
@@ -426,11 +426,11 @@ export async function runBenchmarkSuite(params: {
       avgParseMs,
     },
     aiRepair: {
-      top1Accuracy,
-      top3Accuracy,
+      top1ExactRate,
+      top3ExactRate,
       verifiedRate,
       avgLatencyMs,
-      accuracyByErrorType,
+      top1ExactRateByErrorType,
     },
     neuralAst: {
       avgTed,
@@ -476,8 +476,8 @@ export function exportBenchmarkToCSV(summary: BenchmarkSuiteSummary): string {
     it.classicalValidParseMs,
     it.classicalValidSuccess ? 'YES' : 'NO',
     it.classicalWithoutAiSuccess ? 'YES' : 'NO',
-    it.aiRepairTop1Acc ? 'YES' : 'NO',
-    it.aiRepairTop3Acc ? 'YES' : 'NO',
+    it.aiRepairTop1Exact ? 'YES' : 'NO',
+    it.aiRepairTop3Exact ? 'YES' : 'NO',
     it.aiRepairVerified ? 'YES' : 'NO',
     it.aiRepairLatencyMs,
     it.neuralAstValid ? 'YES' : 'NO',
