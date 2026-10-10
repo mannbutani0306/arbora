@@ -15,9 +15,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Guest mock user for when Supabase is not configured or user signs in in guest mock mode
-const GUEST_STORAGE_KEY = 'arbora_mock_user';
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -25,16 +22,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
-      // Check local storage for mock user
-      try {
-        const stored = localStorage.getItem(GUEST_STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setUser(parsed);
-        }
-      } catch {
-        // Ignore
-      }
       setLoading(false);
       return;
     }
@@ -62,18 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithEmail = async (email: string, password?: string) => {
     if (!isSupabaseConfigured) {
-      // Guest simulated login
-      const mockUser = {
-        id: 'guest_' + email.replace(/[^a-zA-Z0-9]/g, '_'),
-        email,
-        app_metadata: {},
-        user_metadata: {},
-        aud: 'authenticated',
-        created_at: new Date().toISOString(),
-      } as unknown as User;
-      setUser(mockUser);
-      localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(mockUser));
-      return { error: null };
+      throw new Error('Backend not configured.');
     }
 
     if (password) {
@@ -93,19 +69,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUpWithEmail = async (email: string, password?: string) => {
     if (!isSupabaseConfigured) {
-      return signInWithEmail(email, password);
+      throw new Error('Backend not configured.');
+    }
+
+    if (!password || password.length < 8) {
+      throw new Error('Password must be at least 8 characters.');
     }
 
     const { error } = await supabase.auth.signUp({
       email,
-      password: password || 'DefaultPassword123!',
+      password,
     });
     return { error };
   };
 
   const signInWithGoogle = async () => {
     if (!isSupabaseConfigured) {
-      return signInWithEmail('google-user@example.com');
+      throw new Error('Backend not configured.');
     }
 
     const { error } = await supabase.auth.signInWithOAuth({
@@ -120,7 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     if (!isSupabaseConfigured) {
       setUser(null);
-      localStorage.removeItem(GUEST_STORAGE_KEY);
+      setSession(null);
       return;
     }
 

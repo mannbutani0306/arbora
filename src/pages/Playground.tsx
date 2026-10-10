@@ -51,8 +51,8 @@ import {
 } from '../components/RepairCandidateCard';
 import {
   generateNeuralAst,
-  getGeminiApiKey,
 } from '../ai/neuralAst';
+import { checkAiAvailability, isAiAvailable } from '../ai/gatewayClient';
 import {
   compareASTs,
   ComparisonMetrics,
@@ -358,9 +358,12 @@ export function Playground() {
         classicalTree = pRes.ast;
       }
 
-      const apiKey = getGeminiApiKey();
-      if (!apiKey) {
-        toast.error('GEMINI_API_KEY required');
+      if (!isAiAvailable() && !(await checkAiAvailability())) {
+        setEngine('Classical');
+        setActiveTab('AST');
+        setNeuralAst(null);
+        setComparisonMetrics(null);
+        toast.info('AI offline; using deterministic parser');
         return;
       }
 
@@ -1520,7 +1523,7 @@ export function Playground() {
                   isLoading={isComparing}
                   onRunComparison={() => runNeuralComparison(code)}
                   onJumpToSource={jumpToLocation}
-                  missingApiKey={!getGeminiApiKey()}
+                  aiOffline={!isAiAvailable()}
                 />
               </div>
             )}

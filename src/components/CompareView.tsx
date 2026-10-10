@@ -28,7 +28,7 @@ interface CompareViewProps {
   isLoading: boolean;
   onRunComparison: () => void;
   onJumpToSource?: (line: number, col: number) => void;
-  missingApiKey?: boolean;
+  aiOffline?: boolean;
 }
 
 export function CompareView({
@@ -38,7 +38,7 @@ export function CompareView({
   isLoading,
   onRunComparison,
   onJumpToSource,
-  missingApiKey,
+  aiOffline,
 }: CompareViewProps) {
   // Synchronized Pan and Zoom state
   const [zoom, setZoom] = useState<number>(1);
@@ -104,18 +104,18 @@ export function CompareView({
     );
   }
 
-  // If API key is missing
-  if (missingApiKey && !neuralAst) {
+  // If the AI gateway is unavailable
+  if (aiOffline && !neuralAst) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-[#FAFAF9]">
         <div className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center mb-4 text-amber-600">
           <AlertTriangle className="w-6 h-6" />
         </div>
         <h3 className="text-sm font-semibold text-[#1C1917] mb-1">
-          API Key Required
+          AI Offline
         </h3>
         <p className="text-xs text-[#78716C] max-w-sm mb-4">
-          Set GEMINI_API_KEY to generate and compare Neural ASTs.
+          The deterministic parser remains available while AI is offline.
         </p>
         <button
           onClick={onRunComparison}

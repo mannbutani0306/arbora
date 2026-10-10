@@ -48,7 +48,6 @@ export function ExplainView({
   const [targetType, setTargetType] = useState<'node' | 'whole'>('whole');
   const [isStreaming, setIsStreaming] = useState(false);
   const [explanation, setExplanation] = useState<ExplanationContent | null>(null);
-  const [streamBuffer, setStreamBuffer] = useState<string>('');
   const [copied, setCopied] = useState(false);
 
   // Walkthrough state
@@ -89,7 +88,6 @@ export function ExplainView({
       currentLevel: ExplanationLevel = level
     ) => {
       setIsStreaming(true);
-      setStreamBuffer('');
       setExplanation(null);
 
       try {
@@ -98,9 +96,6 @@ export function ExplainView({
           fullCode: code,
           level: currentLevel,
           userId: user?.id,
-          onChunk: (chunk) => {
-            setStreamBuffer(chunk);
-          },
         });
 
         setExplanation(result);
@@ -422,10 +417,12 @@ export function ExplainView({
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs text-[#6366F1]">
               <span className="w-2 h-2 rounded-full bg-[#6366F1] animate-ping" />
-              <span>Streaming explanation...</span>
+              <span>Generating explanation...</span>
             </div>
-            <div className="p-3 bg-stone-50 rounded-lg font-sans text-xs text-[#1C1917] leading-relaxed whitespace-pre-wrap min-h-16">
-              {streamBuffer || 'Synthesizing semantics...'}
+            <div className="p-3 bg-stone-50 rounded-lg min-h-16 space-y-2.5" aria-label="Loading explanation">
+              <div className="h-2.5 w-full rounded bg-stone-200 animate-pulse" />
+              <div className="h-2.5 w-5/6 rounded bg-stone-200 animate-pulse" />
+              <div className="h-2.5 w-2/3 rounded bg-stone-200 animate-pulse" />
             </div>
           </div>
         ) : explanation ? (

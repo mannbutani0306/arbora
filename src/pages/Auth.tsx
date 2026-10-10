@@ -30,10 +30,33 @@ export function Auth() {
     );
   }
 
+  if (!isConfigured) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-sm bg-white border border-[#E7E5E4] rounded-xl p-6 shadow-2xs">
+          <h1 className="text-lg font-semibold text-[#1C1917] mb-2">Backend not configured</h1>
+          <p className="text-xs text-[#78716C] mb-4">
+            Configure Supabase to enable sign-in and cloud storage.
+          </p>
+          <Link
+            to="/playground"
+            className="inline-flex px-4 py-2 rounded-xl text-sm font-medium text-white bg-[#059669] hover:bg-[#047857] transition-colors"
+          >
+            Open playground
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       toast.error('Fill all fields');
+      return;
+    }
+    if (isSignUp && password.length < 8) {
+      toast.error('Password must be at least 8 characters');
       return;
     }
 
@@ -90,12 +113,6 @@ export function Auth() {
         <p className="text-xs text-[#78716C] text-center mb-6">
           {isSignUp ? 'Save trees and runs.' : 'Access your saved ASTs.'}
         </p>
-
-        {!isConfigured && (
-          <div className="mb-4 p-2.5 rounded-lg bg-stone-50 border border-[#E7E5E4] text-[11px] text-[#78716C]">
-            Guest mode active. Add Supabase keys to sync to cloud.
-          </div>
-        )}
 
         {/* Google OAuth Button */}
         <button
@@ -160,6 +177,7 @@ export function Auth() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
+              minLength={isSignUp ? 8 : undefined}
               required
               className="w-full px-3 py-1.5 text-xs bg-white border border-[#E7E5E4] rounded-lg text-[#1C1917] placeholder:text-[#78716C]/60 focus:outline-none focus:border-emerald-600"
             />

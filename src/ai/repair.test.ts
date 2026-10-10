@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   calculateEditDistance,
   verifyAndRankCandidates,
@@ -10,6 +10,11 @@ import {
 } from './repair';
 import { lex } from '../core/lexer';
 import { parse } from '../core/parser';
+
+vi.mock('./gatewayClient', () => ({
+  callGateway: vi.fn(),
+  isAiAvailable: () => false,
+}));
 
 describe('AI Repair Engine', () => {
   beforeEach(() => {
@@ -134,7 +139,7 @@ describe('AI Repair Engine', () => {
         candidate_count: 3,
         verified_count: 2,
         latency_ms: 250,
-        model: 'gemini-3.8-flash',
+        model: 'AI gateway',
         is_verified_success: true,
       });
 
@@ -144,7 +149,7 @@ describe('AI Repair Engine', () => {
         candidate_count: 2,
         verified_count: 0,
         latency_ms: 150,
-        model: 'gemini-3.8-flash',
+        model: 'AI gateway',
         is_verified_success: false,
       });
 

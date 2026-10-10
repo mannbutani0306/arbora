@@ -1,6 +1,6 @@
 /**
  * AI-assisted AST node and program explanation engine for MiniC.
- * Uses Gemini (@google/genai) streaming API with tiered audiences:
+ * Uses the server-side AI gateway with tiered audiences:
  * - Beginner: Jargon-free, intuitive descriptions.
  * - Intermediate: Software developer perspective, scope & syntax tree mechanics.
  * - Expert: Compiler theory, formal grammar productions & operational semantics.
@@ -11,10 +11,10 @@
  * Cache key is a deterministic hash of (node subtree + level).
  */
 
-import { GoogleGenAI } from '@google/genai';
 import { ASTNode } from '../types/ast';
+import { z } from 'zod';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { COMPACT_MINIC_GRAMMAR } from './repair';
+import { callGateway, isAiAvailable } from './gatewayClient';
 
 export type ExplanationLevel = 'Beginner' | 'Intermediate' | 'Expert';
 
@@ -27,28 +27,6 @@ export interface ExplanationContent {
 
 // In-memory cache
 const inMemoryCache = new Map<string, ExplanationContent>();
-
-/**
- * Returns Gemini API key safely from environment or secrets.
- */
-export function getGeminiApiKey(): string | null {
-  if (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) {
-    const key = process.env.GEMINI_API_KEY;
-    if (key && !key.startsWith('MY_') && key !== 'undefined' && key.trim() !== '') {
-      return key.trim();
-    }
-  }
-
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-    const metaEnv = (import.meta as any).env;
-    const key = metaEnv.VITE_GEMINI_API_KEY || metaEnv.GEMINI_API_KEY;
-    if (key && !key.startsWith('MY_') && key !== 'undefined' && key.trim() !== '') {
-      return key.trim();
-    }
-  }
-
-  return null;
-}
 
 /**
  * FNV-1a 32-bit hash algorithm for fast, deterministic cache keys.
@@ -288,19 +266,16 @@ export function extractNodeSnippet(node: ASTNode | null | 'whole_program', fullS
   return snippetLines.join('\n').trim();
 }
 
-/**
- * Streams explanation for an AST node or whole program from Gemini 3.8 Flash.
- * Returns { explanation (max 3 sentences), rule (grammar production), analogy (one line) }.
- */
+/** Requests a complete explanation; the UI displays a loading skeleton while it is generated. */
 export async function streamExplainNode(params: {
   node: ASTNode | null | 'whole_program';
   fullCode: string;
   level: ExplanationLevel;
   userId?: string | null;
   onChunk?: (streamedText: string) => void;
-  apiKeyOverride?: string;
+  _apiKeyOverride?: string;
 }): Promise<ExplanationContent> {
-  const { node, fullCode, level, userId, onChunk, apiKeyOverride } = params;
+  const { node, fullCode, level, userId, onChunk } = params;
 
   const nodeSnippet = extractNodeSnippet(node, fullCode);
   const cacheKey = computeExplanationCacheKey(node, level, nodeSnippet);
@@ -312,118 +287,42 @@ export async function streamExplainNode(params: {
     return cached;
   }
 
-  // 2. Check API key
-  const apiKey = apiKeyOverride !== undefined ? apiKeyOverride : getGeminiApiKey();
-  if (!apiKey) {
+  if (!isAiAvailable()) {
     const offline = getOfflineFallbackExplanation(node, level);
     onChunk?.(offline.explanation);
     return offline;
   }
 
-  // 3. Prepare Prompt & System Instruction
-  const targetLabel =
-    !node || node === 'whole_program'
-      ? 'Whole Program'
-      : `Node '${node.type}'${(node as any).name ? ` (${(node as any).name})` : (node as any).operator ? ` (${(node as any).operator})` : ''}`;
-
-  const systemInstruction = `You are an expert compiler educator and syntax analyzer for the MiniC programming language.
-Explain the requested AST node or whole program for the target audience level: ${level}.
-
-Requirements:
-- "explanation": Maximum 3 sentences. No filler words. Focus directly on the syntax and semantics.
-- "rule": Exactly ONE grammar production rule that generated this construct (e.g. "FunctionDecl -> Type IDENTIFIER '(' ParamListOpt ')' Block" or "BinaryExpr -> Expression '+' Expression").
-- "analogy": Exactly ONE sentence with an intuitive analogy.
-
-Audience Level Nuances:
-- Beginner: No compiler theory jargon. Clear, simple words.
-- Intermediate: Standard programming language concepts (scope, type rules, call stack).
-- Expert: Compiler frontend concepts (context-free grammar, AST hierarchy, operational semantics, precedence).
-
-Return ONLY a valid JSON object matching:
-{
-  "explanation": "string (max 3 sentences)",
-  "rule": "string (grammar production rule)",
-  "analogy": "string (1 sentence)"
-}`;
-
-  const prompt = `Grammar Reference:
-${COMPACT_MINIC_GRAMMAR}
-
-Source Code:
-\`\`\`c
-${fullCode}
-\`\`\`
-
-Target Construct:
-Target: ${targetLabel}
-Snippet:
-\`\`\`c
-${nodeSnippet}
-\`\`\`
-AST Node Details:
-${!node || node === 'whole_program' ? 'Whole program root node' : JSON.stringify({ type: node.type, span: node.span, details: { name: (node as any).name, operator: (node as any).operator, value: (node as any).value } })}
-
-Audience: ${level}`;
-
   try {
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-
-    const responseStream = await ai.models.generateContentStream({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.1,
-        responseMimeType: 'application/json',
-      },
-    });
-
-    let rawBuffer = '';
-
-    for await (const chunk of responseStream) {
-      if (chunk.text) {
-        rawBuffer += chunk.text;
-        // Try parsing progressive explanation to show live text
-        try {
-          const partial = JSON.parse(rawBuffer);
-          if (partial.explanation) {
-            onChunk?.(partial.explanation);
-          } else {
-            onChunk?.(rawBuffer);
-          }
-        } catch {
-          onChunk?.(rawBuffer);
-        }
+    const nodePayload = node && node !== 'whole_program'
+      ? {
+        type: node.type,
+        span: node.span,
+        ...('name' in node && typeof node.name === 'string' ? { name: node.name } : {}),
+        ...('operator' in node && typeof node.operator === 'string' ? { operator: node.operator } : {}),
+        ...('value' in node && (typeof node.value === 'string' || typeof node.value === 'number' || typeof node.value === 'boolean')
+          ? { value: node.value }
+          : {}),
       }
-    }
-
-    // Parse final JSON
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawBuffer);
-    } catch {
-      // Clean possible markdown code fences
-      const clean = rawBuffer.replace(/```json\s*|```/g, '').trim();
-      parsed = JSON.parse(clean);
-    }
-
+      : node;
+    const parsed = await callGateway('explain', {
+      node: nodePayload && nodePayload !== 'whole_program'
+        ? z.record(z.string(), z.json()).parse(JSON.parse(JSON.stringify(nodePayload)))
+        : nodePayload,
+      fullCode,
+      snippet: nodeSnippet,
+      level,
+    });
     const result: ExplanationContent = {
-      explanation: (parsed.explanation || 'Construct parsed successfully.').trim(),
-      rule: (parsed.rule || `${node && node !== 'whole_program' ? node.type : 'Program'} -> rule`).trim(),
-      analogy: (parsed.analogy || 'A foundational building block of the program.').trim(),
+      explanation: parsed.explanation.trim(),
+      rule: parsed.rule.trim(),
+      analogy: parsed.analogy.trim(),
       cached: false,
     };
 
     // Store in cache
     await storeCachedExplanation(cacheKey, level, result, userId);
-
+    onChunk?.(result.explanation);
     return result;
   } catch {
     // If Gemini call fails, return graceful offline fallback

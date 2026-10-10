@@ -1,9 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   normalizeNeuralAST,
   RootASTZod,
   ASTNodeZod,
 } from './neuralAst';
+
+vi.mock('./gatewayClient', () => ({
+  callGateway: vi.fn(),
+}));
 
 describe('Neural AST Zod Schema & Normalizer', () => {
   it('validates a standard Program node', () => {

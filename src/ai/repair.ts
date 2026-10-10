@@ -1,14 +1,14 @@
 /**
- * AI-assisted syntax repair engine for MiniC compiler using Gemini (@google/genai).
+ * AI-assisted syntax repair engine for MiniC using the server-side AI gateway.
  * Uses structured JSON schemas, fast Flash-class model, deterministic verification,
  * confidence ranking, automatic retry with error feedback, and classical panic-mode fallback.
  */
 
-import { GoogleGenAI, Type } from '@google/genai';
 import { parse } from '../core/parser';
 import { lex } from '../core/lexer';
 import { ParseError, ParseResult, Token } from '../types/ast';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { callGateway, isAiAvailable } from './gatewayClient';
 
 export interface RepairEdit {
   line: number;
@@ -64,39 +64,7 @@ export interface RepairStatsSummary {
 }
 
 const STORAGE_KEY = 'arbora_repair_stats';
-const MODEL_NAME = 'gemini-3.8-flash';
-
-// Compact MiniC Grammar specification for prompt grounding
-export const COMPACT_MINIC_GRAMMAR = `
-MiniC Language Grammar:
-- Program: (FunctionDecl | GlobalVarDecl)*
-- Types: int | float | char | bool | void
-- FunctionDecl: Type IDENTIFIER '(' [Param (',' Param)*] ')' Block
-- Param: Type IDENTIFIER ['[' ']']
-- Block: '{' Statement* '}'
-- Statement:
-    VarDecl: Type IDENTIFIER ['[' INT_LITERAL ']'] ['=' Expr] ';'
-  | ExprStmt: Expr ';'
-  | IfStmt: 'if' '(' Expr ')' Statement ['else' Statement]
-  | WhileStmt: 'while' '(' Expr ')' Statement
-  | ForStmt: 'for' '(' (VarDecl | ExprStmt | ';') [Expr] ';' [Expr] ')' Statement
-  | DoWhileStmt: 'do' Statement 'while' '(' Expr ')' ';'
-  | ReturnStmt: 'return' [Expr] ';'
-  | BreakStmt: 'break' ';'
-  | ContinueStmt: 'continue' ';'
-  | Block
-- Expressions (precedence lowest to highest):
-  1. Assignment: '=' '+=' '-=' '*=' '/=' '%='
-  2. Logical OR: '||'
-  3. Logical AND: '&&'
-  4. Equality: '==' '!='
-  5. Relational: '<' '<=' '>' '>='
-  6. Additive: '+' '-'
-  7. Multiplicative: '*' '/' '%'
-  8. Unary: '!' '-' '+' '++' '--'
-  9. Postfix: call '()', index '[]', '++' '--'
-  10. Primary: IDENTIFIER, INT_LITERAL, FLOAT_LITERAL, CHAR_LITERAL, STRING_LITERAL, BOOL_LITERAL, '(' Expr ')'
-`;
+const MODEL_NAME = 'AI gateway';
 
 /**
  * Calculates Levenshtein edit distance between two strings
@@ -167,28 +135,6 @@ export function extractErrorContexts(
 - Local Token Stream: ${tokenStream || 'None'}`;
     })
     .join('\n\n');
-}
-
-/**
- * Reads the Gemini API Key from environment or secrets safely
- */
-export function getGeminiApiKey(): string | null {
-  if (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) {
-    const key = process.env.GEMINI_API_KEY;
-    if (key && !key.startsWith('MY_') && key !== 'undefined' && key.trim() !== '') {
-      return key.trim();
-    }
-  }
-
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-    const metaEnv = (import.meta as any).env;
-    const key = metaEnv.VITE_GEMINI_API_KEY || metaEnv.GEMINI_API_KEY;
-    if (key && !key.startsWith('MY_') && key !== 'undefined' && key.trim() !== '') {
-      return key.trim();
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -350,10 +296,7 @@ export async function repairCode(params: {
     };
   }
 
-  const apiKey = getGeminiApiKey();
-
-  // If no Gemini API key is configured, fallback directly to classical recovery
-  if (!apiKey) {
+  if (!isAiAvailable()) {
     const fallback = classicalPanicModeRecovery(sourceCode, errors);
     const latency = Math.round(performance.now() - startTime);
 
@@ -381,115 +324,21 @@ export async function repairCode(params: {
     };
   }
 
-  const sourceLines = sourceCode.split('\n');
-  const errorContexts = extractErrorContexts(tokens, errors, sourceLines);
-
-  const systemInstruction = `You are an expert compiler engineer specializing in syntax error recovery for the MiniC language.
-Your job is to repair broken source code with minimal, surgical edits.
-Strict Rules:
-1. Return ONLY valid MiniC source code that will parse with ZERO errors according to the provided MiniC grammar specification.
-2. Produce up to 3 distinct valid repair candidates.
-3. Every candidate MUST include:
-   - description: 1-4 word concise summary of the fix.
-   - edits: array of exact edits with line, column, operation ('insert'|'delete'|'replace'), and text.
-   - repairedCode: the complete, fully repaired, valid MiniC source code.
-   - confidence: float between 0.0 and 1.0 reflecting confidence that code is error-free.
-   - rationale: concise 1-2 sentence technical explanation for why this fix is correct.`;
-
-  const prompt = `Grammar Reference:
-${COMPACT_MINIC_GRAMMAR}
-
-Original Broken Code:
-\`\`\`c
-${sourceCode}
-\`\`\`
-
-Deterministic Parser Diagnostics:
-${errorContexts}
-
-Provide up to 3 valid repair candidates in structured JSON.`;
-
   try {
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-
-    const repairSchema = {
-      type: Type.OBJECT,
-      properties: {
-        candidates: {
-          type: Type.ARRAY,
-          description: 'Up to 3 distinct valid repair candidates',
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              description: {
-                type: Type.STRING,
-                description: 'Short 1-4 word description of the fix',
-              },
-              edits: {
-                type: Type.ARRAY,
-                description: 'Exact edit operations',
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    line: { type: Type.INTEGER },
-                    column: { type: Type.INTEGER },
-                    operation: {
-                      type: Type.STRING,
-                      description: 'insert | delete | replace',
-                    },
-                    text: { type: Type.STRING },
-                  },
-                  required: ['line', 'column', 'operation', 'text'],
-                },
-              },
-              repairedCode: {
-                type: Type.STRING,
-                description: 'The complete, fully corrected MiniC source code',
-              },
-              confidence: {
-                type: Type.NUMBER,
-                description: 'Confidence value between 0.0 and 1.0',
-              },
-              rationale: {
-                type: Type.STRING,
-                description: 'Concise technical explanation for the repair',
-              },
-            },
-            required: ['description', 'edits', 'repairedCode', 'confidence', 'rationale'],
-          },
-        },
-      },
-      required: ['candidates'],
-    };
-
     // First attempt
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0,
-        responseMimeType: 'application/json',
-        responseSchema: repairSchema,
-      },
+    const response = await callGateway('repair', {
+      sourceCode,
+      tokens: tokens.map(({ line, column, lexeme }) => ({ line, column, lexeme })),
+      errors: errors.map(({ line, column, message, severity, expected, found }) => ({
+        line,
+        column,
+        message,
+        severity,
+        expected,
+        found,
+      })),
     });
-
-    let rawCandidates: any[] = [];
-    try {
-      const parsedJson = JSON.parse(response.text || '{}');
-      rawCandidates = Array.isArray(parsedJson.candidates) ? parsedJson.candidates : [];
-    } catch {
-      rawCandidates = [];
-    }
-
-    let candidates = verifyAndRankCandidates(rawCandidates, sourceCode);
+    let candidates = verifyAndRankCandidates(response.candidates, sourceCode);
     let verifiedCount = candidates.filter((c) => c.verified).length;
 
     // Retry once if none verified
@@ -499,30 +348,22 @@ Provide up to 3 valid repair candidates in structured JSON.`;
         .map((e) => `Line ${e.line}:${e.column} - ${e.message}`)
         .join('\n');
 
-      const retryPrompt = `Previous attempt produced candidate code that still failed deterministic validation:
-\`\`\`c
-${unverifiedFirst.repairedCode}
-\`\`\`
-Remaining deterministic compiler errors:
-${feedbackErrors}
-
-Please fix these remaining errors strictly so the repaired code parses with ZERO syntax errors according to MiniC grammar.`;
-
       try {
-        const retryResponse = await ai.models.generateContent({
-          model: MODEL_NAME,
-          contents: retryPrompt,
-          config: {
-            systemInstruction,
-            temperature: 0,
-            responseMimeType: 'application/json',
-            responseSchema: repairSchema,
-          },
+        const retryResponse = await callGateway('repair', {
+          sourceCode,
+          tokens: tokens.map(({ line, column, lexeme }) => ({ line, column, lexeme })),
+          errors: errors.map(({ line, column, message, severity, expected, found }) => ({
+            line,
+            column,
+            message,
+            severity,
+            expected,
+            found,
+          })),
+          retryCandidate: unverifiedFirst.repairedCode,
+          retryErrors: feedbackErrors,
         });
-
-        const retryJson = JSON.parse(retryResponse.text || '{}');
-        const retryRaw = Array.isArray(retryJson.candidates) ? retryJson.candidates : [];
-        const retryCandidates = verifyAndRankCandidates(retryRaw, sourceCode);
+        const retryCandidates = verifyAndRankCandidates(retryResponse.candidates, sourceCode);
 
         if (retryCandidates.some((c) => c.verified)) {
           candidates = retryCandidates;

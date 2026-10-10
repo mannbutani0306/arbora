@@ -5,6 +5,8 @@ build/
 .env*
 !.env.example
 ml/.env
+supabase/.env.local
+deno.lock
 ml/data/
 ml/runs/
 .venv/

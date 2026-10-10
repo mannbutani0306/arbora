@@ -1,25 +1,16 @@
 /**
- * Neural AST Generator for MiniC compiler using Gemini (@google/genai).
+ * Neural AST generator for MiniC using the server-side AI gateway.
  * Produces an Abstract Syntax Tree in the exact node schema as the classical parser:
  * { id, type, span, children, ... }
  * Uses temperature 0, strict system prompt, JSON response schema, Zod validation,
  * automatic single retry on malformed output, and latency/validity recording.
  */
 
-import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
 import { ASTNode, ASTNodeType, ASTSpan } from '../types/ast';
+import { callGateway } from './gatewayClient';
 
-const MODEL_NAME = 'gemini-3.8-flash';
-
-export function getGeminiApiKey(): string {
-  return (
-    (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
-    (typeof import.meta !== 'undefined' &&
-      (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
-    ''
-  );
-}
+const MODEL_NAME = 'AI gateway';
 
 // Zod schema for Source Span
 export const ASTSpanZod = z.object({
@@ -67,43 +58,6 @@ export interface NeuralAstResult {
   model: string;
   rawResponse?: string;
 }
-
-const SYSTEM_INSTRUCTION = `You are an expert compiler frontend engineer. Your task is to act as a deterministic neural parser for the MiniC programming language.
-Given MiniC source code, construct the complete Abstract Syntax Tree (AST) in the EXACT node schema as the classical compiler parser.
-
-AST Node Schema Specification:
-Every node MUST be an object with the following base properties:
-- id: string (unique identifier e.g. "prog_1", "fn_1", "block_1", "decl_1", "call_1", "id_1", "lit_1")
-- type: string (must be one of the standard MiniC AST types: "Program", "FunctionDecl", "Param", "VarDecl", "Block", "IfStmt", "WhileStmt", "ForStmt", "DoWhileStmt", "ReturnStmt", "BreakStmt", "ContinueStmt", "ExprStmt", "BinaryExpr", "UnaryExpr", "AssignExpr", "CallExpr", "IndexExpr", "Identifier", "Literal", "ArrayLiteral", "ErrorNode")
-- span: object { startLine: number, startCol: number, endLine: number, endCol: number } corresponding to source code location (1-indexed)
-- children: array of child ASTNode objects in natural syntactic order
-
-Node-specific additional fields:
-- "Program": declarations (array of child nodes), children matches declarations.
-- "FunctionDecl": returnType (string: int, void, float, etc.), name (string), params (array of Param nodes), body (Block node), children: [body] or [...params, body].
-- "Param": paramType (string), name (string), isArray (boolean), children: [].
-- "VarDecl": varType (string), name (string), init (optional ASTNode), isArray (optional boolean), children: init ? [init] : [].
-- "Block": statements (array of ASTNode), children matches statements.
-- "IfStmt": condition (ASTNode), thenBranch (ASTNode), elseBranch (optional ASTNode), children: [condition, thenBranch, ...(elseBranch ? [elseBranch] : [])].
-- "WhileStmt": condition (ASTNode), body (ASTNode), children: [condition, body].
-- "ForStmt": init (optional ASTNode), condition (optional ASTNode), update (optional ASTNode), body (ASTNode), children: [init, condition, update, body].filter(Boolean).
-- "DoWhileStmt": body (ASTNode), condition (ASTNode), children: [body, condition].
-- "ReturnStmt": value (optional ASTNode), children: value ? [value] : [].
-- "BreakStmt", "ContinueStmt": children: [].
-- "ExprStmt": expression (ASTNode), children: [expression].
-- "BinaryExpr": operator (string), left (ASTNode), right (ASTNode), children: [left, right].
-- "UnaryExpr": operator (string), argument (ASTNode), isPrefix (boolean), children: [argument].
-- "AssignExpr": operator (string), target (ASTNode), value (ASTNode), children: [target, value].
-- "CallExpr": callee (ASTNode), args (array of ASTNode), children: [callee, ...args].
-- "IndexExpr": target (ASTNode), index (ASTNode), children: [target, index].
-- "Identifier": name (string), children: [].
-- "Literal": literalType ("int" | "float" | "string" | "char" | "bool"), value (string or number or boolean), raw (string), children: [].
-
-Output Requirements:
-1. The root node MUST be of type "Program".
-2. The tree MUST be complete and properly nested.
-3. Every single node MUST have "id", "type", "span", and "children" (array).
-4. Return ONLY valid JSON conforming to the schema.`;
 
 /**
  * Normalizes AST node to guarantee all required fields and array structures exist.
@@ -225,77 +179,23 @@ function validateASTWithZod(parsedJson: any): {
   }
 }
 
-/**
- * Generates an AST using Gemini Flash at temperature 0.
- * Automatically retries once if output fails Zod validation.
- */
+/** Generates an AST through the AI gateway and retries once after schema validation fails. */
 export async function generateNeuralAst(
   sourceCode: string,
-  apiKeyOverride?: string
+  _apiKeyOverride?: string
 ): Promise<NeuralAstResult> {
   const startTime = performance.now();
-  const apiKey = apiKeyOverride || getGeminiApiKey();
-
-  if (!apiKey) {
-    return {
-      ast: null,
-      isValid: false,
-      validationError: 'GEMINI_API_KEY is not configured.',
-      latencyMs: 0,
-      retried: false,
-      model: MODEL_NAME,
-    };
-  }
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-
-  const prompt = `MiniC Source Code:
-\`\`\`c
-${sourceCode}
-\`\`\`
-
-Generate the complete JSON Abstract Syntax Tree conforming strictly to the node schema.`;
-
   let retried = false;
   let lastRawText = '';
   let lastError = '';
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const currentPrompt =
-        attempt === 1
-          ? prompt
-          : `${prompt}\n\nATTENTION: The previous attempt failed validation with error: ${lastError}. Ensure the response is valid JSON with root type "Program", and every node has "id", "type", "span", and "children".`;
-
-      const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: currentPrompt,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0,
-          responseMimeType: 'application/json',
-        },
+      const parsed = await callGateway('neural_ast', {
+        sourceCode,
+        ...(attempt === 2 ? { validationError: lastError } : {}),
       });
-
-      lastRawText = response.text || '';
-      if (!lastRawText.trim()) {
-        throw new Error('Empty response from model');
-      }
-
-      // Parse JSON
-      let parsed: any;
-      try {
-        parsed = JSON.parse(lastRawText);
-      } catch (jsonErr: any) {
-        throw new Error(`Invalid JSON syntax: ${jsonErr.message}`);
-      }
+      lastRawText = JSON.stringify(parsed);
 
       // Validate with Zod
       const valResult = validateASTWithZod(parsed);
@@ -313,14 +213,14 @@ Generate the complete JSON Abstract Syntax Tree conforming strictly to the node 
         lastError = valResult.error || 'Zod validation failed';
         if (attempt === 1) {
           retried = true;
-          continue; // Retry once
+          continue;
         }
       }
-    } catch (err: any) {
-      lastError = err?.message || 'Model execution error';
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Model execution error';
       if (attempt === 1) {
         retried = true;
-        continue; // Retry once
+        continue;
       }
     }
   }

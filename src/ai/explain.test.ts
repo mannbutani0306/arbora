@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   computeExplanationCacheKey,
   serializeSubtree,
@@ -10,6 +10,11 @@ import {
   extractNodeSnippet,
 } from './explain';
 import { ASTNode } from '../types/ast';
+
+vi.mock('./gatewayClient', () => ({
+  callGateway: vi.fn(),
+  isAiAvailable: () => false,
+}));
 
 describe('AI Explain Engine & Caching', () => {
   beforeEach(() => {
