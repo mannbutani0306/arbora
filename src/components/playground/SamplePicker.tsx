@@ -21,8 +21,14 @@ export function SamplePicker({ samples, onSelect }: SamplePickerProps) {
         }}
         className="max-w-40 rounded-lg border border-[#E7E5E4] bg-white px-2 py-1.5 text-xs text-[#1C1917]"
       >
-        <option value="" disabled>Samples</option>
-        {samples.map((sample) => <option key={sample.id} value={sample.id}>{sample.title}</option>)}
+        <option value="" disabled>
+          Samples
+        </option>
+        {samples.map((sample) => (
+          <option key={sample.id} value={sample.id}>
+            {sample.title}
+          </option>
+        ))}
       </select>
       <ChevronDown className="pointer-events-none -ml-7 h-3 w-3" />
     </label>

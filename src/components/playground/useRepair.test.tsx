@@ -20,10 +20,22 @@ describe('useRepair', () => {
     const { result, unmount } = renderHook(() => useRepair());
 
     act(() => {
-      void result.current.run({ code: 'int a', errors: [], tokens: [], mode: 'Repair', engine: 'Classical' });
+      void result.current.run({
+        code: 'int a',
+        errors: [],
+        tokens: [],
+        mode: 'Repair',
+        engine: 'Classical',
+      });
     });
     act(() => {
-      void result.current.run({ code: 'int b', errors: [], tokens: [], mode: 'Repair', engine: 'Classical' });
+      void result.current.run({
+        code: 'int b',
+        errors: [],
+        tokens: [],
+        mode: 'Repair',
+        engine: 'Classical',
+      });
     });
 
     expect(signals).toHaveLength(2);

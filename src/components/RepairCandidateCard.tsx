@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { CheckCircle2, AlertCircle, Info, Sparkles, ArrowRight } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Info, ArrowRight, Copy } from 'lucide-react';
 import { RepairCandidate } from '../ai/repair';
 import { RepairDiffViewer } from './RepairDiffViewer';
 import { ENGINE_LABELS } from '../ai/engines';
+import { useToast } from '../lib/toast';
 
 interface RepairCandidateCardProps {
   candidate: RepairCandidate;
   index: number;
   originalCode: string;
   onApply: (repairedCode: string) => void;
+  matchesOriginal?: boolean | null;
+  sameAst?: boolean | null;
 }
 
 export function RepairCandidateCard({
@@ -16,8 +19,11 @@ export function RepairCandidateCard({
   index,
   originalCode,
   onApply,
+  matchesOriginal,
+  sameAst,
 }: RepairCandidateCardProps) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const toast = useToast();
 
   const confidencePct = Math.round(candidate.confidence * 100);
 
@@ -29,9 +35,7 @@ export function RepairCandidateCard({
           <span className="text-[11px] font-semibold text-[#78716C] uppercase shrink-0">
             Fix {index + 1}
           </span>
-          <h4 className="text-xs font-semibold text-[#1C1917] truncate">
-            {candidate.description}
-          </h4>
+          <h4 className="text-xs font-semibold text-[#1C1917] truncate">{candidate.description}</h4>
           <span className="px-1.5 py-0.5 rounded bg-stone-100 text-[10px] text-stone-700 border border-stone-200 shrink-0">
             {ENGINE_LABELS[candidate.engineId]}
           </span>
@@ -68,7 +72,10 @@ export function RepairCandidateCard({
         {/* Status Badge + Apply Button */}
         <div className="flex items-center gap-2 shrink-0">
           {candidate.verified ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span
+              title="Verified = parses with zero errors"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
+            >
               <CheckCircle2 className="w-3 h-3 text-[#059669]" />
               <span>Verified</span>
             </span>
@@ -82,6 +89,38 @@ export function RepairCandidateCard({
               <span>Unverified</span>
             </span>
           )}
+          {matchesOriginal !== undefined && (
+            <span
+              title="Matches original = token-equal to the injected program"
+              className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${matchesOriginal ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-stone-200 bg-stone-50 text-stone-600'}`}
+            >
+              {matchesOriginal ? 'Matches original' : 'Not exact'}
+            </span>
+          )}
+          {sameAst !== undefined && (
+            <span
+              title="Same AST = structurally equal after ignoring IDs and source spans"
+              className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${sameAst ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-stone-200 bg-stone-50 text-stone-600'}`}
+            >
+              {sameAst ? 'Same AST' : 'Different AST'}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() =>
+              void navigator.clipboard
+                .writeText(candidate.repairedCode)
+                .then(() => toast.success('Candidate copied'))
+                .catch((error: unknown) =>
+                  toast.error(error instanceof Error ? error.message : 'Unable to copy candidate.'),
+                )
+            }
+            aria-label={`Copy repair ${index + 1}`}
+            title="Copy candidate"
+            className="rounded-lg border border-[#E7E5E4] p-1.5 text-[#78716C] hover:bg-stone-50"
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
 
           <button
             type="button"
@@ -110,10 +149,15 @@ export function RepairCandidateCard({
       </div>
 
       {/* Side-by-side Diff Viewer */}
-      <RepairDiffViewer
-        originalCode={originalCode}
-        repairedCode={candidate.repairedCode}
-      />
+      <RepairDiffViewer originalCode={originalCode} repairedCode={candidate.repairedCode} />
+      {!candidate.verified && candidate.remainingErrors.length > 0 && (
+        <p className="text-[11px] text-rose-700" role="status">
+          Remaining errors:{' '}
+          {candidate.remainingErrors
+            .map((error) => `${error.line}:${error.column} ${error.message}`)
+            .join('; ')}
+        </p>
+      )}
     </div>
   );
 }

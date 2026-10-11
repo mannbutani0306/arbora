@@ -1,6 +1,8 @@
 import React from 'react';
 
-interface State { hasError: boolean }
+interface State {
+  hasError: boolean;
+}
 
 export class TabErrorBoundary extends React.Component<React.PropsWithChildren, State> {
   state: State = { hasError: false };
@@ -15,7 +17,14 @@ export class TabErrorBoundary extends React.Component<React.PropsWithChildren, S
 
   render() {
     if (this.state.hasError) {
-      return <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">This tab could not be displayed. Reload the tab to try again.</div>;
+      return (
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"
+        >
+          This tab could not be displayed. Select another tab, then return to retry.
+        </div>
+      );
     }
     return this.props.children;
   }

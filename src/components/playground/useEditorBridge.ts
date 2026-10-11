@@ -6,7 +6,7 @@ import type { ASTNode, ParseResult } from '../../types/ast';
 
 export function useEditorBridge(
   parseResult: ParseResult | null,
-  onNodeAtCursor: (node: ASTNode | null) => void
+  onNodeAtCursor: (node: ASTNode | null) => void,
 ) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -53,7 +53,10 @@ export function useEditorBridge(
     if (!instance) return;
     const { startLine, startCol, endLine, endCol } = node.span;
     const range = new monacoRef.current!.Range(
-      startLine, startCol, Math.max(startLine, endLine), Math.max(startCol + 1, endCol)
+      startLine,
+      startCol,
+      Math.max(startLine, endLine),
+      Math.max(startCol + 1, endCol),
     );
     instance.revealRangeInCenter(range);
     instance.setSelection(range);
@@ -67,9 +70,12 @@ export function useEditorBridge(
     if (!instance || !monaco || !model) return;
     const errors = parseResult?.errors ?? [];
     const markers: editor.IMarkerData[] = errors.map((error) => ({
-      severity: error.severity === 'warning'
-        ? monaco.MarkerSeverity.Warning
-        : error.severity === 'info' ? monaco.MarkerSeverity.Info : monaco.MarkerSeverity.Error,
+      severity:
+        error.severity === 'warning'
+          ? monaco.MarkerSeverity.Warning
+          : error.severity === 'info'
+            ? monaco.MarkerSeverity.Info
+            : monaco.MarkerSeverity.Error,
       message: error.message,
       startLineNumber: Math.max(1, error.line || 1),
       startColumn: Math.max(1, error.column || 1),

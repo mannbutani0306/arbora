@@ -10,5 +10,14 @@ export function ExplainTab(props: {
   onHighlight: (line: number, column: number, endColumn?: number) => void;
   onExplanation: (key: string, content: ExplanationContent) => void;
 }) {
-  return <ExplainView ast={props.ast} code={props.code} selectedNode={props.selectedNode} onSelectNode={props.onSelectNode} onHighlightSpan={props.onHighlight} onExplanationGenerated={props.onExplanation} />;
+  return (
+    <ExplainView
+      ast={props.ast}
+      code={props.code}
+      selectedNode={props.selectedNode}
+      onSelectNode={props.onSelectNode}
+      onHighlightSpan={props.onHighlight}
+      onExplanationGenerated={props.onExplanation}
+    />
+  );
 }

@@ -9,11 +9,9 @@ import {
   RotateCcw,
   Sparkles,
   CheckCircle2,
-  Clock,
   BarChart2,
   Check,
   X,
-  FileCode,
 } from 'lucide-react';
 import { ASTNode } from '../types/ast';
 import { computeAllMetrics } from '../core/codeMetrics';
@@ -22,6 +20,7 @@ import { parse } from '../core/parser';
 import { compareASTs } from '../core/compare';
 import { Tooltip } from './Tooltip';
 import { useToast } from '../lib/toast';
+import { useAuth } from '../lib/AuthContext';
 import type { RepairStatsSummary } from '../ai/repair';
 
 interface MetricsViewProps {
@@ -45,6 +44,7 @@ const DEFAULT_DIFF_CODE_B = `int factorial(int n) {
 
 export function MetricsView({ ast, code }: MetricsViewProps) {
   const { info: toastInfo, error: toastError } = useToast();
+  const { user } = useAuth();
 
   // Metrics from current AST
   const metrics = useMemo(() => {
@@ -61,6 +61,25 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
     avgVerifiedCount: 0,
     logs: [],
   });
+  const exactAttempts = repairStats.logs.filter(
+    (log) => log.exact_match !== null && log.exact_match !== undefined,
+  );
+  const exactRate = exactAttempts.length
+    ? Math.round(
+        (exactAttempts.filter((log) => log.exact_match).length / exactAttempts.length) * 100,
+      )
+    : null;
+  const engineLatencies = repairStats.logs.reduce<Record<string, { total: number; count: number }>>(
+    (groups, log) => {
+      const engine = log.engine ?? log.model;
+      const group = groups[engine] ?? { total: 0, count: 0 };
+      group.total += log.latency_ms;
+      group.count += 1;
+      groups[engine] = group;
+      return groups;
+    },
+    {},
+  );
 
   React.useEffect(() => {
     let active = true;
@@ -72,7 +91,9 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
         console.error('Unable to load repair statistics.', error);
         toastError('Unable to load repair statistics');
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [toastError]);
 
   // AST Diff state
@@ -116,7 +137,9 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
 
   const applyDiffPreset = (type: 'loop' | 'operator' | 'function') => {
     if (type === 'loop') {
-      setDiffCodeB(`int main() {\n    int sum = 0;\n    for (int i = 0; i < 10; i++) {\n        sum += i;\n    }\n    return sum;\n}`);
+      setDiffCodeB(
+        `int main() {\n    int sum = 0;\n    for (int i = 0; i < 10; i++) {\n        sum += i;\n    }\n    return sum;\n}`,
+      );
     } else if (type === 'operator') {
       setDiffCodeB(diffCodeA.replace('+', '*').replace('<=', '<'));
     } else if (type === 'function') {
@@ -250,25 +273,23 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
             <Sparkles className="w-4 h-4 text-[#6366F1]" />
             <h3 className="text-xs font-semibold text-[#1C1917]">Repair statistics</h3>
           </div>
-          {repairStats.totalAttempts > 0 && (
+          {user && repairStats.totalAttempts > 0 && (
             <button
               type="button"
               onClick={handleClearRepairStats}
               className="text-[11px] text-[#78716C] hover:text-[#1C1917] flex items-center gap-1 transition-colors"
             >
               <RotateCcw className="w-3 h-3" />
-              <span>Clear</span>
+              <span>Clear my stats</span>
             </button>
           )}
         </div>
 
         {repairStats.totalAttempts === 0 ? (
-          <p className="text-xs text-[#78716C] py-2">
-            No syntax repair attempts recorded yet.
-          </p>
+          <p className="text-xs text-[#78716C] py-2">No syntax repair attempts recorded yet.</p>
         ) : (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-center">
               <div className="p-2.5 bg-indigo-50/40 rounded-lg border border-indigo-100">
                 <div className="text-[10px] text-[#6366F1] mb-1">Attempts</div>
                 <div className="text-base font-mono font-semibold text-[#1C1917]">
@@ -293,6 +314,52 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
                   {repairStats.avgCandidates}
                 </div>
               </div>
+              <div className="p-2.5 bg-indigo-50/40 rounded-lg border border-indigo-100">
+                <div className="text-[10px] text-[#6366F1] mb-1">Exact match</div>
+                <div
+                  className="text-base font-mono font-semibold text-[#1C1917]"
+                  title="Only attempts with stored ground truth are included"
+                >
+                  {exactRate === null ? 'N/A' : `${exactRate}%`}
+                </div>
+                <div className="text-[9px] text-[#78716C]">
+                  {exactAttempts.length} ground-truth attempts
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-[#E7E5E4] bg-[#FAFAF9] p-3">
+              <h4 className="text-[11px] font-medium text-[#1C1917]">Latency per engine</h4>
+              {Object.entries(engineLatencies).length ? (
+                Object.entries(engineLatencies).map(([engine, aggregate]) => {
+                  const average = Math.round(aggregate.total / aggregate.count);
+                  const maximum = Math.max(
+                    ...Object.values(engineLatencies).map((item) => item.total / item.count),
+                  );
+                  return (
+                    <div
+                      key={engine}
+                      className="grid grid-cols-[7rem_1fr_4rem] items-center gap-2 text-[10px]"
+                    >
+                      <span className="truncate text-[#78716C]" title={engine}>
+                        {engine}
+                      </span>
+                      <div
+                        className="h-2 overflow-hidden rounded-full bg-stone-200"
+                        aria-label={`${engine}: ${average} milliseconds average latency`}
+                      >
+                        <div
+                          className="h-full rounded-full bg-indigo-500"
+                          style={{ width: `${maximum ? (average / maximum) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <span className="text-right font-mono text-[#1C1917]">{average} ms</span>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-[10px] text-[#78716C]">No repair latency recorded yet.</p>
+              )}
             </div>
 
             {/* Recent Repair Log */}
@@ -313,9 +380,7 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
                       <td className="py-1.5 px-3 font-sans text-[11px] text-[#1C1917]">
                         {log.model}
                       </td>
-                      <td className="py-1.5 px-3 text-center text-[#78716C]">
-                        {log.error_count}
-                      </td>
+                      <td className="py-1.5 px-3 text-center text-[#78716C]">{log.error_count}</td>
                       <td className="py-1.5 px-3 text-center text-[#78716C]">
                         {log.candidate_count}
                       </td>
@@ -325,14 +390,10 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
                             Verified
                           </span>
                         ) : (
-                          <span className="text-stone-500 font-sans text-[10px]">
-                            Unverified
-                          </span>
+                          <span className="text-stone-500 font-sans text-[10px]">Unverified</span>
                         )}
                       </td>
-                      <td className="py-1.5 px-3 text-right text-[#78716C]">
-                        {log.latency_ms}ms
-                      </td>
+                      <td className="py-1.5 px-3 text-right text-[#78716C]">{log.latency_ms}ms</td>
                     </tr>
                   ))}
                 </tbody>
@@ -423,9 +484,7 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
                 <span className="text-[#78716C] block text-[10px]">Similarity</span>
                 <span
                   className={`font-mono font-semibold ${
-                    comparisonResult.metrics.similarity >= 0.9
-                      ? 'text-[#059669]'
-                      : 'text-amber-600'
+                    comparisonResult.metrics.similarity >= 0.9 ? 'text-[#059669]' : 'text-amber-600'
                   }`}
                 >
                   {Math.round(comparisonResult.metrics.similarity * 100)}%
@@ -482,29 +541,24 @@ export function MetricsView({ ast, code }: MetricsViewProps) {
                           isMismatch
                             ? 'bg-amber-50 text-amber-700 border-amber-200'
                             : isExtra
-                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                            : 'bg-rose-50 text-rose-700 border-rose-200'
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : 'bg-rose-50 text-rose-700 border-rose-200'
                         }`}
                       >
                         {diff.kind}
                       </span>
-                      <span className="text-[#78716C] text-[11px] truncate">
-                        {diff.path}
-                      </span>
+                      <span className="text-[#78716C] text-[11px] truncate">{diff.path}</span>
                     </div>
 
                     <div className="text-[11px] text-[#1C1917] shrink-0 font-medium">
                       {isMismatch && (
                         <span>
-                          {diff.expected} → <strong className="text-amber-700">{diff.actual}</strong>
+                          {diff.expected} →{' '}
+                          <strong className="text-amber-700">{diff.actual}</strong>
                         </span>
                       )}
-                      {isExtra && (
-                        <span className="text-indigo-700">+{diff.actual}</span>
-                      )}
-                      {isMissing && (
-                        <span className="text-rose-700">-{diff.expected}</span>
-                      )}
+                      {isExtra && <span className="text-indigo-700">+{diff.actual}</span>}
+                      {isMissing && <span className="text-rose-700">-{diff.expected}</span>}
                     </div>
                   </div>
                 );

@@ -10,5 +10,14 @@ export function CompareTab(props: {
   onRun: () => void;
   onJump: (line: number, column: number) => void;
 }) {
-  return <CompareView classicalAst={props.classicalAst} neuralAst={props.neuralAst} metrics={props.metrics} isLoading={props.isLoading} onRunComparison={props.onRun} onJumpToSource={props.onJump} />;
+  return (
+    <CompareView
+      classicalAst={props.classicalAst}
+      neuralAst={props.neuralAst}
+      metrics={props.metrics}
+      isLoading={props.isLoading}
+      onRunComparison={props.onRun}
+      onJumpToSource={props.onJump}
+    />
+  );
 }

@@ -13,9 +13,19 @@ export function PlaygroundOverlays(props: {
   onOpenReport: () => void;
   onStartTour: () => void;
 }) {
-  return <>
-    <ReportModal isOpen={props.reportOpen} onClose={props.onCloseReport} data={props.reportData} />
-    <OnboardingTour isOpen={props.tourOpen} onClose={props.onCloseTour} />
-    <CommandPalette onRunCode={props.onRun} onOpenReport={props.onOpenReport} onStartTour={props.onStartTour} />
-  </>;
+  return (
+    <>
+      <ReportModal
+        isOpen={props.reportOpen}
+        onClose={props.onCloseReport}
+        data={props.reportData}
+      />
+      <OnboardingTour isOpen={props.tourOpen} onClose={props.onCloseTour} />
+      <CommandPalette
+        onRunCode={props.onRun}
+        onOpenReport={props.onOpenReport}
+        onStartTour={props.onStartTour}
+      />
+    </>
+  );
 }

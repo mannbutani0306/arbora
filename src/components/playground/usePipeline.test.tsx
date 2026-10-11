@@ -17,7 +17,9 @@ function createWorkerHarness() {
   } as unknown as Worker;
   Object.defineProperty(worker, 'onmessage', {
     get: () => listener,
-    set: (next: typeof listener) => { listener = next; },
+    set: (next: typeof listener) => {
+      listener = next;
+    },
   });
   return {
     worker,
@@ -38,10 +40,12 @@ function createWorkerHarness() {
 describe('usePipeline', () => {
   it('ignores stale worker responses after a newer parse request', () => {
     const harness = createWorkerHarness();
-    const { result } = renderHook(() => usePipeline('', 'Strict', {
-      workerFactory: () => harness.worker,
-      debounceMs: 60_000,
-    }));
+    const { result } = renderHook(() =>
+      usePipeline('', 'Strict', {
+        workerFactory: () => harness.worker,
+        debounceMs: 60_000,
+      }),
+    );
 
     act(() => {
       result.current.run('int oldValue;');
