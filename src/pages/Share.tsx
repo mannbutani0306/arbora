@@ -3,8 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { getPublicBySlug } from '../lib/dataService';
 import { AnalysisRecord } from '../lib/supabase';
 import { useToast } from '../lib/toast';
-import { ArboraLogo } from '../components/ArboraLogo';
 import { Copy, Check, ExternalLink } from 'lucide-react';
+import { toPlaygroundLoadState } from '../components/playground/useAnalysisPersistence';
 
 export function Share() {
   const { slug } = useParams<{ slug: string }>();
@@ -46,19 +46,6 @@ export function Share() {
     setCopied(true);
     toast.success('Link copied');
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleOpenInPlayground = () => {
-    if (analysis) {
-      sessionStorage.setItem('arbora_load_code', analysis.source_code);
-      sessionStorage.setItem('arbora_load_title', analysis.title);
-      if (analysis.neural_ast) {
-        sessionStorage.setItem('arbora_load_neural_ast', JSON.stringify(analysis.neural_ast));
-      }
-      if (analysis.comparison) {
-        sessionStorage.setItem('arbora_load_comparison', JSON.stringify(analysis.comparison));
-      }
-    }
   };
 
   // One-line loading state
@@ -118,7 +105,7 @@ export function Share() {
           </button>
           <Link
             to="/playground"
-            onClick={handleOpenInPlayground}
+            state={toPlaygroundLoadState(analysis)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-white bg-[#059669] hover:bg-[#047857] transition-colors"
           >
             <ExternalLink className="w-3.5 h-3.5" />

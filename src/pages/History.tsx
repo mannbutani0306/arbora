@@ -10,6 +10,7 @@ import { AnalysisRecord } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
 import { useToast } from '../lib/toast';
 import { Search, ExternalLink, Trash2, Edit2, Share2, Plus, Code, Check } from 'lucide-react';
+import { toPlaygroundLoadState } from '../components/playground/useAnalysisPersistence';
 
 export function History() {
   const [analyses, setAnalyses] = useState<AnalysisRecord[]>([]);
@@ -112,17 +113,7 @@ export function History() {
   };
 
   const handleOpen = (item: AnalysisRecord) => {
-    // Store in session storage to be loaded into playground
-    sessionStorage.setItem('arbora_load_code', item.source_code);
-    sessionStorage.setItem('arbora_load_title', item.title);
-    if (item.id) sessionStorage.setItem('arbora_load_id', item.id);
-    if (item.neural_ast) {
-      sessionStorage.setItem('arbora_load_neural_ast', JSON.stringify(item.neural_ast));
-    }
-    if (item.comparison) {
-      sessionStorage.setItem('arbora_load_comparison', JSON.stringify(item.comparison));
-    }
-    navigate('/playground');
+    navigate('/playground', { state: toPlaygroundLoadState(item) });
   };
 
   // One-line loading state
