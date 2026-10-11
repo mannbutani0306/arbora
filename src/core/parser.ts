@@ -77,6 +77,7 @@ const ASSIGN_OPERATORS = new Set<string>(['=', '+=', '-=', '*=', '/=', '%=']);
 
 const MAX_ERRORS = 100;
 const MAX_TRACE_STEPS = 5000;
+const MAX_NESTING_DEPTH = 256;
 
 export class Parser {
   private tokens: Token[] = [];
@@ -109,7 +110,7 @@ export class Parser {
           [],
           lexErr.lexeme,
           'error',
-          'Tokenized as ERROR token'
+          'Tokenized as ERROR token',
         );
       }
     } else {
@@ -117,24 +118,26 @@ export class Parser {
     }
 
     let ast: ProgramNode;
-    try {
-      ast = this.parseProgram();
-    } catch {
-      // Safe fallback if unexpected exception occurs
-      const endTok = this.peek();
-      ast = {
-        id: 'prog_fallback',
-        type: 'Program',
-        declarations: [],
-        body: [],
-        children: [],
-        span: {
-          startLine: 1,
-          startCol: 1,
-          endLine: endTok ? endTok.line : 1,
-          endCol: endTok ? endTok.column : 1,
-        },
-      };
+    const excessiveNesting = this.findExcessiveNesting();
+    if (excessiveNesting) {
+      this.recordError(
+        'ERR_MAX_NESTING_DEPTH',
+        `Maximum parser nesting depth of ${MAX_NESTING_DEPTH} exceeded`,
+        excessiveNesting.line,
+        excessiveNesting.column,
+        [],
+        excessiveNesting.lexeme,
+        'error',
+        'Parsing stopped before recursive descent',
+      );
+      ast = this.emptyProgram();
+    } else {
+      try {
+        ast = this.parseProgram();
+      } catch {
+        // Safe fallback if unexpected exception occurs
+        ast = this.emptyProgram();
+      }
     }
 
     return {
@@ -146,6 +149,40 @@ export class Parser {
       traceTruncated: this.traceTruncated,
       success: this.errors.length === 0,
     };
+  }
+
+  private emptyProgram(): ProgramNode {
+    const endTok = this.peek();
+    return {
+      id: 'prog_fallback',
+      type: 'Program',
+      declarations: [],
+      body: [],
+      children: [],
+      span: {
+        startLine: 1,
+        startCol: 1,
+        endLine: endTok ? endTok.line : 1,
+        endCol: endTok ? endTok.column : 1,
+      },
+    };
+  }
+
+  private findExcessiveNesting(): Token | undefined {
+    let depth = 0;
+    for (const token of this.tokens) {
+      if (token.type !== 'DELIMITER') continue;
+      if (token.lexeme === '(' || token.lexeme === '{' || token.lexeme === '[') {
+        depth += 1;
+        if (depth > MAX_NESTING_DEPTH) return token;
+      } else if (
+        (token.lexeme === ')' || token.lexeme === '}' || token.lexeme === ']') &&
+        depth > 0
+      ) {
+        depth -= 1;
+      }
+    }
+    return undefined;
   }
 
   private reset(): void {
@@ -211,7 +248,7 @@ export class Parser {
     expected: string[],
     found: string,
     severity: 'error' | 'warning',
-    recoveryAction: string
+    recoveryAction: string,
   ): ParseError {
     const errorObj: ParseError = {
       code,
@@ -269,7 +306,7 @@ export class Parser {
         [';'],
         curr.lexeme || 'EOF',
         'error',
-        "Inserted virtual ';'"
+        "Inserted virtual ';'",
       );
       return true;
     }
@@ -283,7 +320,7 @@ export class Parser {
       [';'],
       curr.lexeme || 'EOF',
       'error',
-      "Skipped tokens to statement synchronization boundary"
+      'Skipped tokens to statement synchronization boundary',
     );
     this.synchronizeStatement();
     return false;
@@ -313,7 +350,7 @@ export class Parser {
         [')'],
         curr.lexeme || 'EOF',
         'error',
-        "Inserted virtual ')'"
+        "Inserted virtual ')'",
       );
       return true;
     }
@@ -326,7 +363,7 @@ export class Parser {
       [')'],
       curr.lexeme || 'EOF',
       'error',
-      "Skipped token looking for ')'"
+      "Skipped token looking for ')'",
     );
     if (!this.isAtEnd() && curr.lexeme !== '{' && curr.lexeme !== ';') {
       this.advance();
@@ -372,7 +409,7 @@ export class Parser {
     ruleApplied: string,
     tokenConsumed?: string,
     event: ParseTraceStep['event'] = 'consume',
-    nodeId?: string
+    nodeId?: string,
   ): void {
     if (this.trace.length >= MAX_TRACE_STEPS) {
       this.traceTruncated = true;
@@ -467,7 +504,7 @@ export class Parser {
           ['IDENTIFIER'],
           this.peek().lexeme || 'EOF',
           'error',
-          'Created ErrorNode and skipped to sync boundary'
+          'Created ErrorNode and skipped to sync boundary',
         );
         this.synchronizeStatement();
         return {
@@ -499,7 +536,7 @@ export class Parser {
       ['Type declaration', 'Function definition'],
       errTok.lexeme,
       'error',
-      'Created ErrorNode and continuing'
+      'Created ErrorNode and continuing',
     );
     this.exitRule();
 
@@ -536,7 +573,7 @@ export class Parser {
             ['Type'],
             errTok.lexeme,
             'error',
-            'Skipped invalid parameter token'
+            'Skipped invalid parameter token',
           );
         }
         if (this.current === prev && !this.isAtEnd()) {
@@ -578,7 +615,7 @@ export class Parser {
         ['IDENTIFIER'],
         this.peek().lexeme || 'EOF',
         'error',
-        "Assigned placeholder name 'anon'"
+        "Assigned placeholder name 'anon'",
       );
     }
 
@@ -594,7 +631,7 @@ export class Parser {
           [']'],
           this.peek().lexeme,
           'error',
-          "Inserted virtual ']'"
+          "Inserted virtual ']'",
         );
       }
       isArray = true;
@@ -634,7 +671,7 @@ export class Parser {
           [']'],
           this.peek().lexeme,
           'error',
-          "Inserted virtual ']'"
+          "Inserted virtual ']'",
         );
       }
     }
@@ -679,7 +716,7 @@ export class Parser {
         ['{'],
         startTok.lexeme,
         'error',
-        "Inserted virtual '{'"
+        "Inserted virtual '{'",
       );
     }
 
@@ -710,7 +747,7 @@ export class Parser {
         ['}'],
         this.peek().lexeme || 'EOF',
         'error',
-        "Inserted virtual '}'"
+        "Inserted virtual '}'",
       );
     }
 
@@ -746,7 +783,7 @@ export class Parser {
             ['IDENTIFIER'],
             this.peek().lexeme,
             'error',
-            'Created ErrorNode and skipped to sync boundary'
+            'Created ErrorNode and skipped to sync boundary',
           );
           this.synchronizeStatement();
           return {
@@ -799,7 +836,7 @@ export class Parser {
         ['('],
         this.peek().lexeme,
         'error',
-        "Inserted virtual '('"
+        "Inserted virtual '('",
       );
     }
 
@@ -843,7 +880,7 @@ export class Parser {
         ['('],
         this.peek().lexeme,
         'error',
-        "Inserted virtual '('"
+        "Inserted virtual '('",
       );
     }
 
@@ -878,7 +915,7 @@ export class Parser {
         ['while'],
         this.peek().lexeme,
         'error',
-        "Inserted virtual 'while'"
+        "Inserted virtual 'while'",
       );
     }
 
@@ -891,7 +928,7 @@ export class Parser {
         ['('],
         this.peek().lexeme,
         'error',
-        "Inserted virtual '('"
+        "Inserted virtual '('",
       );
     }
 
@@ -925,7 +962,7 @@ export class Parser {
         ['('],
         this.peek().lexeme,
         'error',
-        "Inserted virtual '('"
+        "Inserted virtual '('",
       );
     }
 
@@ -1117,7 +1154,7 @@ export class Parser {
         ['expression'],
         tok.lexeme,
         'error',
-        'Created ErrorNode operand'
+        'Created ErrorNode operand',
       );
       return {
         id: this.genId('err'),
@@ -1185,9 +1222,10 @@ export class Parser {
     // 2. Integer Literals
     if (this.match('INT_LITERAL')) {
       const prev = this.previous();
-      const val = prev.lexeme.startsWith('0x') || prev.lexeme.startsWith('0X')
-        ? parseInt(prev.lexeme, 16)
-        : parseInt(prev.lexeme, 10);
+      const val =
+        prev.lexeme.startsWith('0x') || prev.lexeme.startsWith('0X')
+          ? parseInt(prev.lexeme, 16)
+          : parseInt(prev.lexeme, 10);
       return this.createLiteralNode('int', val, prev.lexeme, prev);
     }
 
@@ -1250,7 +1288,7 @@ export class Parser {
           ['}'],
           this.peek().lexeme,
           'error',
-          "Inserted virtual '}'"
+          "Inserted virtual '}'",
         );
       }
       const span = this.makeSpan(startTok, this.previous());
@@ -1274,7 +1312,7 @@ export class Parser {
       ['literal', 'identifier', '('],
       errTok.lexeme,
       'error',
-      'Created ErrorNode and continuing'
+      'Created ErrorNode and continuing',
     );
 
     return {
@@ -1287,7 +1325,12 @@ export class Parser {
     };
   }
 
-  private createLiteralNode(literalType: LiteralType, value: any, raw: string, tok: Token): LiteralNode {
+  private createLiteralNode(
+    literalType: LiteralType,
+    value: any,
+    raw: string,
+    tok: Token,
+  ): LiteralNode {
     return {
       id: this.genId('lit'),
       type: 'Literal',
@@ -1309,7 +1352,8 @@ export class Parser {
       if (tok.lexeme === '==' || tok.lexeme === '!=') return Precedence.EQUALITY;
       if (['<', '<=', '>', '>='].includes(tok.lexeme)) return Precedence.RELATIONAL;
       if (tok.lexeme === '+' || tok.lexeme === '-') return Precedence.ADDITIVE;
-      if (tok.lexeme === '*' || tok.lexeme === '/' || tok.lexeme === '%') return Precedence.MULTIPLICATIVE;
+      if (tok.lexeme === '*' || tok.lexeme === '/' || tok.lexeme === '%')
+        return Precedence.MULTIPLICATIVE;
       if (tok.lexeme === '++' || tok.lexeme === '--') return Precedence.POSTFIX;
     }
 
@@ -1363,7 +1407,7 @@ export class Parser {
           [']'],
           this.peek().lexeme,
           'error',
-          "Inserted virtual ']'"
+          "Inserted virtual ']'",
         );
       }
       const span: ASTSpan = {

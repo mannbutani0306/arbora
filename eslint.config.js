@@ -4,7 +4,15 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['coverage/**', 'dist/**', 'node_modules/**', '.venv/**', '.venv-1/**'],
+    ignores: [
+      'coverage/**',
+      'dist/**',
+      'node_modules/**',
+      'test-results/**',
+      'playwright-report/**',
+      '.venv/**',
+      '.venv-1/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

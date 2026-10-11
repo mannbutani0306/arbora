@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { reportClientError } from '../lib/observability';
 
 interface Props {
   children: ReactNode;
@@ -18,7 +19,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Compiler error boundary caught:', error, errorInfo);
+    reportClientError(error, { componentStack: errorInfo.componentStack });
   }
 
   private handleReset = () => {

@@ -509,10 +509,29 @@ Deno.serve(async (request) => {
     return jsonResponse({ code: 'MODEL_ERROR', message: 'Unable to apply request limit.' }, 500, corsHeaders);
   }
 
+  const task = parsedRequest.data.task;
+  const startedAt = Date.now();
   try {
     const output = await generateModelJson(parsedRequest.data);
+    console.log(JSON.stringify({
+      event: 'ai_gateway.model_request',
+      task,
+      outcome: 'success',
+      status: 200,
+      duration_ms: Date.now() - startedAt,
+    }));
     return jsonResponse(output, 200, corsHeaders);
   } catch (error) {
+    const coldStart = error instanceof DOMException
+      && (error.name === 'ModelColdStartError' || error.name === 'TimeoutError');
+    console.error(JSON.stringify({
+      event: 'ai_gateway.model_request',
+      task,
+      outcome: 'failure',
+      code: coldStart ? 'MODEL_COLD_START' : 'MODEL_ERROR',
+      status: coldStart ? 503 : 502,
+      duration_ms: Date.now() - startedAt,
+    }));
     if (error instanceof DOMException && error.name === 'ModelColdStartError') {
       return jsonResponse(
         { code: 'MODEL_COLD_START', message: 'Model waking up, retry in 20 s.' },

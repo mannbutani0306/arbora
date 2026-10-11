@@ -1,0 +1,30 @@
+services:
+  frontend:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?Set VITE_SUPABASE_URL in your local environment}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?Set VITE_SUPABASE_ANON_KEY in your local environment}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+    ports:
+      - "8080:80"
+    depends_on:
+      arbora-t5:
+        condition: service_started
+
+  arbora-t5:
+    build:
+      context: .
+      dockerfile: ml/serve/Dockerfile
+    ports:
+      - "7860:7860"
+    environment:
+      HF_REPO_REPAIR: ${HF_REPO_REPAIR:?Set HF_REPO_REPAIR in your local environment}
+      HF_REPO_AST: ${HF_REPO_AST:?Set HF_REPO_AST in your local environment}
+      HF_TOKEN: ${HF_TOKEN:-}
+      ARBORA_MODEL_TOKEN: ${ARBORA_MODEL_TOKEN:-}
+      HF_REVISION: ${HF_REVISION:-main}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
+      ARBORA_INT8: ${ARBORA_INT8:-false}
+      ARBORA_MAX_CONCURRENCY: ${ARBORA_MAX_CONCURRENCY:-1}
+      ARBORA_REQUEST_TIMEOUT_SECONDS: ${ARBORA_REQUEST_TIMEOUT_SECONDS:-120}

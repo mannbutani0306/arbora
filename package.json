@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "npm run sync:results && vite build",
+    "build": "npm run sync:results && npm run generate:og && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "typecheck": "tsc --noEmit",
@@ -19,13 +19,22 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:bundle-security": "tsx scripts/check-bundle-secrets.ts",
+    "test:data-leak": "tsx tools/check-data-leak.ts",
     "test:deno": "deno test --no-lock supabase/functions/_shared",
+    "lighthouse": "tsx scripts/lighthouse.ts",
+    "generate:og": "tsx scripts/generate-og-image.ts",
+    "smoke": "tsx scripts/smoke.ts",
     "format": "prettier --write .",
     "sync:results": "tsx scripts/sync-results.ts",
     "bench:baselines": "tsx tools/generate-dataset.ts --n 1000 --seed 42 --out ml/data/raw.jsonl && tsx tools/split-dataset.ts --in ml/data/raw.jsonl --seed 42 --out-dir ml/data && tsx tools/run-baselines.ts --test ml/data/test.jsonl --train ml/data/train.jsonl --out results/baselines.json"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@monaco-editor/react": "^4.7.0",
+    "@sentry/react": "^11.6.0",
     "@supabase/supabase-js": "^2.117.3",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",
@@ -34,6 +43,7 @@
     "d3-shape": "^3.2.0",
     "d3-zoom": "^3.0.0",
     "lucide-react": "^0.546.0",
+    "monaco-editor": "^0.57.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
@@ -44,6 +54,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.64.0",
     "@testing-library/react": "^16.3.3",
     "@types/d3-hierarchy": "^3.1.7",
     "@types/d3-selection": "^3.0.12",
@@ -54,14 +65,23 @@
     "@types/react-dom": "^19.3.0",
     "@vitest/coverage-v8": "^5.0.3",
     "axe-core": "^4.14.0",
+    "chrome-launcher": "^1.2.2",
     "eslint": "^9.0.0",
+    "fast-check": "^4.10.2",
     "globals": "^16.0.0",
     "jsdom": "^30.1.2",
+    "lighthouse": "^13.5.0",
     "prettier": "^3.0.0",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^6.0.0",
     "typescript-eslint": "^8.0.0",
     "vitest": "^5.0.3"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "^3.4.16"
+    }
   }
 }

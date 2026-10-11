@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://arbora.vercel.app/sitemap.xml

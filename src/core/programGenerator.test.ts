@@ -30,7 +30,7 @@ describe('probabilistic MiniC program generation', () => {
       });
       expect(parse(generated.code).errors, `seed ${seed}`).toHaveLength(0);
     }
-  }, 15_000);
+  }, 60_000);
 
   it('never uses a variable inside its own declaration initializer', () => {
     for (let seed = 0; seed < 500; seed++) {

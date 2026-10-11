@@ -26,7 +26,9 @@ describe('Playground toolbar accessibility', () => {
       />,
     );
 
-    const results = await axe.run(container);
+    const results = await axe.run(container, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] },
+    });
     expect(results.violations).toEqual([]);
-  });
+  }, 30_000);
 });

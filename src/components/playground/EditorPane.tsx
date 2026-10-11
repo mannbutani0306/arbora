@@ -1,5 +1,6 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
 import { Eraser, Upload } from 'lucide-react';
+import './monaco';
 
 interface EditorPaneProps {
   code: string;
