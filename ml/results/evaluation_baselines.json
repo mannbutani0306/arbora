@@ -1,0 +1,380 @@
+{
+  "task": "repair",
+  "dataset": "Phase 3 TypeScript parser holdout",
+  "n_test": 30,
+  "n_test_programs": 26,
+  "models": {
+    "B0": {
+      "metrics": {
+        "top1_exact": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 30
+        },
+        "top3_exact": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 30
+        },
+        "top1_ast_match": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 30
+        },
+        "top3_ast_match": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 30
+        },
+        "verified": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 30
+        }
+      },
+      "verified_candidate_rate": {
+        "estimate": null,
+        "lower": null,
+        "upper": null,
+        "n": 0
+      },
+      "candidate_counts": {
+        "verified": 0,
+        "all": 0
+      },
+      "by_error_type": {
+        "delete": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 9
+        },
+        "insert": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 6
+        },
+        "natural": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 5
+        },
+        "replace": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 7
+        },
+        "swap": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 3
+        }
+      },
+      "by_size_bucket": {
+        "large": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 11
+        },
+        "medium": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 9
+        },
+        "small": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 10
+        }
+      },
+      "by_error_position": {
+        "end": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 11
+        },
+        "middle": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 6
+        },
+        "start": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 13
+        }
+      },
+      "latency_ms": {
+        "mean": 0.14424999999993512,
+        "median": 0.12559999999939464,
+        "p95": 0.35390000000006694,
+        "measured_device": "cpu"
+      },
+      "parameter_count": 0,
+      "n_cases": 30
+    },
+    "B1": {
+      "metrics": {
+        "top1_exact": {
+          "estimate": 0.16666666666666666,
+          "lower": 0.03333333333333333,
+          "upper": 0.3,
+          "n": 30
+        },
+        "top3_exact": {
+          "estimate": 0.26666666666666666,
+          "lower": 0.1,
+          "upper": 0.43333333333333335,
+          "n": 30
+        },
+        "top1_ast_match": {
+          "estimate": 0.16666666666666666,
+          "lower": 0.03333333333333333,
+          "upper": 0.3,
+          "n": 30
+        },
+        "top3_ast_match": {
+          "estimate": 0.26666666666666666,
+          "lower": 0.1,
+          "upper": 0.43333333333333335,
+          "n": 30
+        },
+        "verified": {
+          "estimate": 0.9,
+          "lower": 0.8,
+          "upper": 1.0,
+          "n": 30
+        }
+      },
+      "verified_candidate_rate": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 69
+      },
+      "candidate_counts": {
+        "verified": 69,
+        "all": 69
+      },
+      "by_error_type": {
+        "delete": {
+          "estimate": 0.1111111111111111,
+          "lower": 0.0,
+          "upper": 0.3333333333333333,
+          "n": 9
+        },
+        "insert": {
+          "estimate": 0.3333333333333333,
+          "lower": 0.0,
+          "upper": 0.6666666666666666,
+          "n": 6
+        },
+        "natural": {
+          "estimate": 0.2,
+          "lower": 0.0,
+          "upper": 0.6,
+          "n": 5
+        },
+        "replace": {
+          "estimate": 0.14285714285714285,
+          "lower": 0.0,
+          "upper": 0.42857142857142855,
+          "n": 7
+        },
+        "swap": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 3
+        }
+      },
+      "by_size_bucket": {
+        "large": {
+          "estimate": 0.18181818181818182,
+          "lower": 0.0,
+          "upper": 0.45454545454545453,
+          "n": 11
+        },
+        "medium": {
+          "estimate": 0.1111111111111111,
+          "lower": 0.0,
+          "upper": 0.3333333333333333,
+          "n": 9
+        },
+        "small": {
+          "estimate": 0.2,
+          "lower": 0.0,
+          "upper": 0.5,
+          "n": 10
+        }
+      },
+      "by_error_position": {
+        "end": {
+          "estimate": 0.18181818181818182,
+          "lower": 0.0,
+          "upper": 0.45454545454545453,
+          "n": 11
+        },
+        "middle": {
+          "estimate": 0.3333333333333333,
+          "lower": 0.0,
+          "upper": 0.6666666666666666,
+          "n": 6
+        },
+        "start": {
+          "estimate": 0.07692307692307693,
+          "lower": 0.0,
+          "upper": 0.23076923076923078,
+          "n": 13
+        }
+      },
+      "latency_ms": {
+        "mean": 45.90845666666658,
+        "median": 2.5824000000002343,
+        "p95": 278.47809999999936,
+        "measured_device": "cpu"
+      },
+      "parameter_count": 0,
+      "n_cases": 30
+    },
+    "B2": {
+      "metrics": {
+        "top1_exact": {
+          "estimate": 0.2,
+          "lower": 0.06666666666666667,
+          "upper": 0.36666666666666664,
+          "n": 30
+        },
+        "top3_exact": {
+          "estimate": 0.26666666666666666,
+          "lower": 0.1,
+          "upper": 0.43333333333333335,
+          "n": 30
+        },
+        "top1_ast_match": {
+          "estimate": 0.2,
+          "lower": 0.06666666666666667,
+          "upper": 0.36666666666666664,
+          "n": 30
+        },
+        "top3_ast_match": {
+          "estimate": 0.26666666666666666,
+          "lower": 0.1,
+          "upper": 0.43333333333333335,
+          "n": 30
+        },
+        "verified": {
+          "estimate": 0.9,
+          "lower": 0.8,
+          "upper": 1.0,
+          "n": 30
+        }
+      },
+      "verified_candidate_rate": {
+        "estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "n": 69
+      },
+      "candidate_counts": {
+        "verified": 69,
+        "all": 69
+      },
+      "by_error_type": {
+        "delete": {
+          "estimate": 0.2222222222222222,
+          "lower": 0.0,
+          "upper": 0.5555555555555556,
+          "n": 9
+        },
+        "insert": {
+          "estimate": 0.3333333333333333,
+          "lower": 0.0,
+          "upper": 0.6666666666666666,
+          "n": 6
+        },
+        "natural": {
+          "estimate": 0.2,
+          "lower": 0.0,
+          "upper": 0.6,
+          "n": 5
+        },
+        "replace": {
+          "estimate": 0.14285714285714285,
+          "lower": 0.0,
+          "upper": 0.42857142857142855,
+          "n": 7
+        },
+        "swap": {
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.0,
+          "n": 3
+        }
+      },
+      "by_size_bucket": {
+        "large": {
+          "estimate": 0.18181818181818182,
+          "lower": 0.0,
+          "upper": 0.45454545454545453,
+          "n": 11
+        },
+        "medium": {
+          "estimate": 0.1111111111111111,
+          "lower": 0.0,
+          "upper": 0.3333333333333333,
+          "n": 9
+        },
+        "small": {
+          "estimate": 0.3,
+          "lower": 0.0,
+          "upper": 0.6,
+          "n": 10
+        }
+      },
+      "by_error_position": {
+        "end": {
+          "estimate": 0.18181818181818182,
+          "lower": 0.0,
+          "upper": 0.45454545454545453,
+          "n": 11
+        },
+        "middle": {
+          "estimate": 0.5,
+          "lower": 0.16666666666666666,
+          "upper": 0.8333333333333334,
+          "n": 6
+        },
+        "start": {
+          "estimate": 0.07692307692307693,
+          "lower": 0.0,
+          "upper": 0.23076923076923078,
+          "n": 13
+        }
+      },
+      "latency_ms": {
+        "mean": 43.82196666666652,
+        "median": 3.1667999999999665,
+        "p95": 289.1877999999997,
+        "measured_device": "cpu"
+      },
+      "parameter_count": 0,
+      "n_cases": 30
+    }
+  }
+}

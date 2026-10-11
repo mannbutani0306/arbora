@@ -32,6 +32,22 @@ describe('probabilistic MiniC program generation', () => {
     }
   });
 
+  it('never uses a variable inside its own declaration initializer', () => {
+    for (let seed = 0; seed < 500; seed++) {
+      const generated = generateProgram(seed, {
+        sizeClass: (['small', 'medium', 'large'] as const)[seed % 3],
+      });
+      const declarations = generated.code.matchAll(
+        /\b(?:int|float|bool|char|string)\s+([A-Za-z_]\w*)\s*=\s*([^;]+);/g
+      );
+      for (const [, name, initializer] of declarations) {
+        expect(initializer, `seed ${seed}, declaration ${name}`).not.toMatch(
+          new RegExp(`\\b${name}\\b`)
+        );
+      }
+    }
+  });
+
   it('has no normalized token duplicates in the first 1,000 programs', () => {
     const generated = generateUniquePrograms(1000, 1234, { sizeClass: 'small' });
     const normalized = generated.map((program) =>

@@ -405,11 +405,11 @@ function renderGeneratedProgram(seed: number, random: () => number, options: Req
   const nextInt = () => pick(random, intNames());
   const declare = (type: (typeof TYPE_NAMES)[number]) => {
     const name = freshName(type === 'int' ? undefined : type);
-    declared.set(name, type);
     let initializer = typeLiteral(type, seed + namesUsed.size * 13);
     if (type === 'int' && random() < 0.75) {
       initializer = random() < 0.3 ? `${helperName}(${nextInt()})` : `${nextInt()} ${pick(random, ['+', '-', '*'] as const)} ${seed % 11}`;
     }
+    declared.set(name, type);
     lines.push(`${indentDepth}${type} ${name} = ${initializer};`);
   };
 
