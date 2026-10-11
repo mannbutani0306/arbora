@@ -42,7 +42,7 @@
     "d3-selection": "^3.0.0",
     "d3-shape": "^3.2.0",
     "d3-zoom": "^3.0.0",
-    "lucide-react": "^0.546.0",
+    "lucide-react": "^1.53.0",
     "monaco-editor": "^0.57.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
