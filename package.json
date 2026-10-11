@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:deno": "deno test --no-lock supabase/functions/_shared",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "bench:baselines": "tsx tools/generate-dataset.ts --n 1000 --seed 42 --out ml/data/raw.jsonl && tsx tools/split-dataset.ts --in ml/data/raw.jsonl --seed 42 --out-dir ml/data && tsx tools/run-baselines.ts --test ml/data/test.jsonl --train ml/data/train.jsonl --out results/baselines.json"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -46,6 +47,7 @@
     "globals": "^16.0.0",
     "prettier": "^3.0.0",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.0",
     "typescript-eslint": "^8.0.0",
     "vitest": "^5.0.3"

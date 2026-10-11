@@ -53,7 +53,7 @@ export interface RepairLogEntry {
   model: string;
   is_verified_success: boolean;
   user_id?: string | null;
-  error_type?: 'delete' | 'insert' | 'swap' | 'natural';
+  error_type?: 'delete' | 'insert' | 'swap' | 'replace' | 'natural';
   top1_correct?: boolean | null;
   top3_correct?: boolean | null;
   exact_match?: boolean | null;
@@ -66,7 +66,7 @@ export interface RepairLogEntry {
 
 export interface RepairContext {
   groundTruth?: string;
-  errorType?: 'delete' | 'insert' | 'swap' | 'natural';
+  errorType?: 'delete' | 'insert' | 'swap' | 'replace' | 'natural';
   sourceCode?: string;
   candidates?: RepairCandidate[];
   engine?: string;

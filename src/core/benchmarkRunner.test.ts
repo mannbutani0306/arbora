@@ -3,6 +3,8 @@ import { generateBenchmarkPrograms } from './programGenerator';
 import { injectSingleTokenError } from './errorInjector';
 import { parse } from './parser';
 import { exportBenchmarkToCSV, BenchmarkSuiteSummary } from './benchmarkRunner';
+import { createBaselines } from './baselines';
+import { trainNgram } from './ngramRepair';
 
 describe('Benchmark Suite & Generators', () => {
   it('generates 20 valid MiniC programs that all parse without errors', () => {
@@ -57,7 +59,13 @@ describe('Benchmark Suite & Generators', () => {
           top3ExactRate: 100,
           verifiedRate: 100,
           avgLatencyMs: 300,
-          top1ExactRateByErrorType: { delete: 100, insert: 100, swap: 100 },
+          top1ExactRateByErrorType: {
+            delete: 100,
+            insert: 100,
+            swap: 100,
+            replace: 100,
+            natural: 100,
+          },
         },
         neuralAst: {
           avgTed: 0,
@@ -66,8 +74,10 @@ describe('Benchmark Suite & Generators', () => {
           validityRate: 100,
         },
         ablation: {
-          withoutAiSuccessRate: 0,
-          withAiSuccessRate: 100,
+          b0NoneExactRate: 0,
+          b1ClassicalTop1ExactRate: 0,
+          aiRawTop3ExactRate: 100,
+          aiVerifiedTop3ExactRate: 100,
         },
         items: [
           {
@@ -80,7 +90,10 @@ describe('Benchmark Suite & Generators', () => {
             mutatedCode: 'int main() { return 0 }',
             errorType: 'delete',
             errorDescription: 'Deleted semicolon',
-            classicalWithoutAiSuccess: false,
+            b0Exact: false,
+            b1Top1Exact: true,
+            aiRawTop3Exact: true,
+            aiVerifiedTop3Exact: true,
             aiRepairTop1Exact: true,
             aiRepairTop3Exact: true,
             aiRepairVerified: true,
@@ -99,6 +112,16 @@ describe('Benchmark Suite & Generators', () => {
       expect(csv).toContain('Program Name');
       expect(csv).toContain('"Test Prog"');
       expect(csv).toContain('YES');
+    });
+
+    it('exposes B0, B1, and B2 through the same deterministic repair interface', () => {
+      const model = trainNgram([['int', 'main', '(', ')', '{', 'return', '0', ';', '}']]);
+      const [b0, b1, b2] = createBaselines(model);
+      const broken = 'int main() { return 0 }';
+      expect([b0.name, b1.name, b2.name]).toEqual(['B0', 'B1', 'B2']);
+      expect(b0.repair(broken)).toEqual([]);
+      expect(b1.repair(broken).length).toBeGreaterThan(0);
+      expect(b2.repair(broken).every((candidate) => candidate.verified)).toBe(true);
     });
   });
 });

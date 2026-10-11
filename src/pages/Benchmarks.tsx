@@ -52,7 +52,9 @@ export function Benchmarks() {
   const [progress, setProgress] = useState<BenchmarkProgress | null>(null);
   const [summary, setSummary] = useState<BenchmarkSuiteSummary | null>(null);
   const [historyRuns, setHistoryRuns] = useState<BenchmarkRunRecord[]>([]);
-  const [filterType, setFilterType] = useState<'all' | 'delete' | 'insert' | 'swap'>('all');
+  const [filterType, setFilterType] = useState<
+    'all' | 'delete' | 'insert' | 'swap' | 'replace' | 'natural'
+  >('all');
 
   const cancelRef = useRef(false);
 
@@ -161,6 +163,14 @@ export function Benchmarks() {
         type: 'Swap',
         exactRate: summary.aiRepair.top1ExactRateByErrorType.swap,
       },
+      {
+        type: 'Replace',
+        exactRate: summary.aiRepair.top1ExactRateByErrorType.replace,
+      },
+      {
+        type: 'Natural',
+        exactRate: summary.aiRepair.top1ExactRateByErrorType.natural,
+      },
     ];
   }, [summary]);
 
@@ -169,9 +179,11 @@ export function Benchmarks() {
     if (!summary) return [];
     return [
       {
-        name: 'Ablation Comparison',
-        withoutAi: summary.ablation.withoutAiSuccessRate,
-        withAi: summary.ablation.withAiSuccessRate,
+        name: 'Top-k exact',
+        b0: summary.ablation.b0NoneExactRate,
+        b1: summary.ablation.b1ClassicalTop1ExactRate,
+        aiRaw: summary.ablation.aiRawTop3ExactRate,
+        aiVerified: summary.ablation.aiVerifiedTop3ExactRate,
       },
     ];
   }, [summary]);
@@ -285,6 +297,7 @@ export function Benchmarks() {
       {/* STAT CARDS */}
       {summary && (
         <div className="space-y-4">
+          <div className="text-[11px] text-[#78716C]">{summary.totalPrograms} programs</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {/* 1. Classical: success rate & avg parse ms */}
             <Tooltip content="Deterministic parser success rate on valid programs and avg parse latency" position="top">
@@ -334,18 +347,18 @@ export function Benchmarks() {
               </div>
             </Tooltip>
 
-            {/* 4. Ablation: without vs with AI repair */}
-            <Tooltip content="Ablation baseline: success rate on syntax errors without AI vs. with AI repair" position="top">
+            {/* 4. Ablation: parser-only, classical, and AI correctness */}
+            <Tooltip content="Exact source recovery: parser-only, classical baseline, and AI with or without parser verification." position="top">
               <div className="bg-white rounded-xl border border-[#E7E5E4] p-3.5 shadow-2xs text-left w-full">
                 <div className="flex items-center justify-between text-[11px] font-medium text-[#78716C] mb-1">
                   <span>Ablation delta</span>
                   <BarChart2 className="w-3.5 h-3.5 text-emerald-600" />
                 </div>
                 <div className="text-xl font-mono font-semibold text-[#059669]">
-                  +{summary.ablation.withAiSuccessRate - summary.ablation.withoutAiSuccessRate}%
+                  {summary.ablation.aiVerifiedTop3ExactRate}%
                 </div>
                 <div className="text-[11px] text-[#78716C] font-mono mt-0.5">
-                  {summary.ablation.withoutAiSuccessRate}% → {summary.ablation.withAiSuccessRate}%
+                  B1: {summary.ablation.b1ClassicalTop1ExactRate}% | AI raw: {summary.ablation.aiRawTop3ExactRate}%
                 </div>
               </div>
             </Tooltip>
@@ -353,12 +366,12 @@ export function Benchmarks() {
 
           {/* CHARTS SECTION (Recharts light palette) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Chart 1: Accuracy by Error Type */}
+            {/* Chart 1: Exact correctness by error type */}
             <div className="bg-white rounded-xl border border-[#E7E5E4] p-4 shadow-2xs space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <BarChart2 className="w-4 h-4 text-[#059669]" />
-                  <h2 className="text-xs font-semibold text-[#1C1917]">Accuracy by error type</h2>
+                  <h2 className="text-xs font-semibold text-[#1C1917]">Top-1 exact by error type</h2>
                 </div>
                 <span className="text-[10px] text-[#78716C] font-mono">AI repair</span>
               </div>
@@ -377,7 +390,7 @@ export function Benchmarks() {
                         fontSize: '11px',
                         boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                       }}
-                      formatter={(val: any) => [`${val}%`, 'Accuracy']}
+                      formatter={(val: any) => [`${val}%`, 'Top-1 exact']}
                     />
                     <Bar dataKey="exactRate" fill="#059669" radius={[4, 4, 0, 0]} barSize={36} />
                   </BarChart>
@@ -392,7 +405,7 @@ export function Benchmarks() {
                   <Layers className="w-4 h-4 text-[#6366F1]" />
                   <h2 className="text-xs font-semibold text-[#1C1917]">Ablation analysis</h2>
                 </div>
-                <span className="text-[10px] text-[#78716C] font-mono">Baseline vs AI</span>
+                <span className="text-[10px] text-[#78716C] font-mono">Top-k exact</span>
               </div>
 
               <div className="h-48 w-full">
@@ -411,16 +424,24 @@ export function Benchmarks() {
                       }}
                       formatter={(val: any, name: any) => [
                         `${val}%`,
-                        name === 'withoutAi' ? 'Without AI' : 'With AI Repair',
+                        name === 'b0' ? 'B0 none' :
+                          name === 'b1' ? 'B1 classical' :
+                            name === 'aiRaw' ? 'AI raw' : 'AI verified',
                       ]}
                     />
                     <Legend
                       verticalAlign="top"
                       height={28}
-                      formatter={(value) => (value === 'withoutAi' ? 'Without AI' : 'With AI Repair')}
+                      formatter={(value) => (
+                        value === 'b0' ? 'B0 none' :
+                          value === 'b1' ? 'B1 classical' :
+                            value === 'aiRaw' ? 'AI raw' : 'AI verified'
+                      )}
                     />
-                    <Bar dataKey="withoutAi" fill="#A8A29E" radius={[4, 4, 0, 0]} barSize={32} />
-                    <Bar dataKey="withAi" fill="#6366F1" radius={[4, 4, 0, 0]} barSize={32} />
+                    <Bar dataKey="b0" fill="#A8A29E" radius={[4, 4, 0, 0]} barSize={32} />
+                    <Bar dataKey="b1" fill="#78716C" radius={[4, 4, 0, 0]} barSize={32} />
+                    <Bar dataKey="aiRaw" fill="#818CF8" radius={[4, 4, 0, 0]} barSize={32} />
+                    <Bar dataKey="aiVerified" fill="#6366F1" radius={[4, 4, 0, 0]} barSize={32} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -499,7 +520,7 @@ export function Benchmarks() {
 
               {/* Error Type Filter Tabs */}
               <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-[#E7E5E4]">
-                {(['all', 'delete', 'insert', 'swap'] as const).map((type) => (
+                {(['all', 'delete', 'insert', 'swap', 'replace', 'natural'] as const).map((type) => (
                   <button
                     key={type}
                     type="button"

@@ -40,18 +40,25 @@ export interface FlattenedNode {
   id: string;
   type: string;
   span?: ASTSpan;
-  children: ASTNode[];
-  original: ASTNode;
+  children: StructuralNode[];
+  original: StructuralNode;
+}
+
+export interface StructuralNode {
+  id?: string;
+  type: string;
+  span?: ASTSpan;
+  children: StructuralNode[];
 }
 
 /**
  * Traverses a tree in post-order and returns flattened array of nodes (1-indexed).
  */
-export function getPostOrderNodes(root: ASTNode | null | undefined): FlattenedNode[] {
+export function getPostOrderNodes(root: StructuralNode | null | undefined): FlattenedNode[] {
   if (!root) return [];
   const result: FlattenedNode[] = [];
 
-  function traverse(node: ASTNode) {
+  function traverse(node: StructuralNode) {
     if (node.children && Array.isArray(node.children)) {
       for (const child of node.children) {
         if (child) traverse(child);
@@ -78,8 +85,8 @@ export function getPostOrderNodes(root: ASTNode | null | undefined): FlattenedNo
  * - Relabel: 0 if types match, 1 if types differ
  */
 export function calculateTreeEditDistance(
-  treeA: ASTNode | null | undefined,
-  treeB: ASTNode | null | undefined
+  treeA: StructuralNode | null | undefined,
+  treeB: StructuralNode | null | undefined
 ): number {
   if (!treeA && !treeB) return 0;
   if (!treeA) return countTreeNodes(treeB!);
@@ -131,17 +138,17 @@ export function calculateTreeEditDistance(
 }
 
 function computeLeftmostLeaves(
-  root: ASTNode,
+  root: StructuralNode,
   postOrder: FlattenedNode[],
   leftmostLeaf: number[]
 ) {
   // Map from ASTNode original reference to post-order index (1-based)
-  const nodeToIndex = new Map<ASTNode, number>();
+  const nodeToIndex = new Map<StructuralNode, number>();
   for (let i = 0; i < postOrder.length; i++) {
     nodeToIndex.set(postOrder[i].original, i + 1);
   }
 
-  function getLeftmost(node: ASTNode): number {
+  function getLeftmost(node: StructuralNode): number {
     if (!node.children || node.children.length === 0) {
       const idx = nodeToIndex.get(node) || 1;
       leftmostLeaf[idx] = idx;
@@ -241,7 +248,7 @@ function computeForestDist(
   }
 }
 
-export function countTreeNodes(root: ASTNode): number {
+export function countTreeNodes(root: StructuralNode): number {
   if (!root) return 0;
   let count = 1;
   if (root.children && Array.isArray(root.children)) {
@@ -275,11 +282,11 @@ export interface NodeTuple {
 /**
  * Extracts (type, depth, parent-type) tuples from an AST.
  */
-export function extractNodeTuples(root: ASTNode | null | undefined): NodeTuple[] {
+export function extractNodeTuples(root: StructuralNode | null | undefined): NodeTuple[] {
   if (!root) return [];
   const tuples: NodeTuple[] = [];
 
-  function traverse(node: ASTNode, depth: number, parentType: string) {
+  function traverse(node: StructuralNode, depth: number, parentType: string) {
     tuples.push({
       type: node.type,
       depth,
@@ -302,8 +309,8 @@ export function extractNodeTuples(root: ASTNode | null | undefined): NodeTuple[]
  * Treats tree A as ground truth (classical) and tree B as candidate (neural).
  */
 export function calculateTupleMetrics(
-  treeA: ASTNode | null | undefined,
-  treeB: ASTNode | null | undefined
+  treeA: StructuralNode | null | undefined,
+  treeB: StructuralNode | null | undefined
 ): { precision: number; recall: number; f1: number } {
   const tuplesA = extractNodeTuples(treeA);
   const tuplesB = extractNodeTuples(treeB);
@@ -352,8 +359,8 @@ export function calculateTupleMetrics(
  * Same structure and matching node types at every position.
  */
 export function checkExactStructuralMatch(
-  treeA: ASTNode | null | undefined,
-  treeB: ASTNode | null | undefined
+  treeA: StructuralNode | null | undefined,
+  treeB: StructuralNode | null | undefined
 ): boolean {
   if (!treeA && !treeB) return true;
   if (!treeA || !treeB) return false;
