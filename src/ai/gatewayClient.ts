@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
-export type GatewayTask = 'repair' | 'neural_ast' | 'explain';
+export type GatewayTask = 'repair' | 'neural_ast' | 'explain' | 'repair_t5' | 'ast_t5';
 export type AppErrorCode =
   | 'RATE_LIMITED'
   | 'UNAUTHORIZED'
   | 'TIMEOUT'
   | 'MODEL_ERROR'
+  | 'MODEL_COLD_START'
   | 'OFFLINE';
 
 export class AppError extends Error {
@@ -50,10 +51,21 @@ const ExplainPayloadSchema = z.object({
   level: z.enum(['Beginner', 'Intermediate', 'Expert']),
 }).strict();
 
+const T5RepairPayloadSchema = z.object({
+  code: z.string().min(1).max(8_192),
+  num_beams: z.number().int().min(1).max(8).optional(),
+  num_return: z.number().int().min(1).max(8).optional(),
+}).strict();
+const T5AstPayloadSchema = z.object({
+  code: z.string().min(1).max(8_192),
+}).strict();
+
 const PayloadSchemas = {
   repair: RepairPayloadSchema,
   neural_ast: NeuralAstPayloadSchema,
   explain: ExplainPayloadSchema,
+  repair_t5: T5RepairPayloadSchema,
+  ast_t5: T5AstPayloadSchema,
 };
 
 const ErrorResponseSchema = z.object({
@@ -67,11 +79,29 @@ const ExplanationResponseSchema = z.object({
   rule: z.string(),
   analogy: z.string(),
 });
+const ArboraAstResponseSchema = z.object({
+  ast_bracketed: z.string(),
+  is_valid: z.boolean(),
+  model_id: z.string(),
+  revision: z.string(),
+  latency_ms: z.number(),
+});
+const T5RepairResponseSchema = z.object({
+  candidates: z.array(z.object({
+    description: z.string(),
+    edits: z.array(z.record(z.string(), z.json())),
+    repairedCode: z.string(),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string(),
+  })).max(8),
+});
 
 const ResponseSchemas = {
   repair: RepairResponseSchema,
   neural_ast: JsonResponseSchema,
   explain: ExplanationResponseSchema,
+  repair_t5: T5RepairResponseSchema,
+  ast_t5: ArboraAstResponseSchema,
 };
 
 type PayloadFor<T extends GatewayTask> = z.infer<(typeof PayloadSchemas)[T]>;
@@ -101,6 +131,7 @@ function getGatewayUrl(): string {
 }
 
 function mapErrorCode(code: string, status: number): AppErrorCode {
+  if (code === 'MODEL_COLD_START') return 'MODEL_COLD_START';
   if (code === 'RATE_LIMITED' || status === 429) return 'RATE_LIMITED';
   if (code === 'UNAUTHORIZED' || status === 401) return 'UNAUTHORIZED';
   if (code === 'TIMEOUT' || status === 408 || status === 504) return 'TIMEOUT';

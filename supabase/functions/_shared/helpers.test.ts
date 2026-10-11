@@ -22,6 +22,14 @@ Deno.test('gateway schemas validate known tasks and explanation output', () => {
     payload: {},
   }).success, false);
   assertEquals(GatewayRequestSchema.safeParse({
+    task: 'repair_t5',
+    payload: { code: 'int main() {}', num_beams: 8, num_return: 8 },
+  }).success, true);
+  assertEquals(GatewayRequestSchema.safeParse({
+    task: 'ast_t5',
+    payload: { code: 'int main() {}' },
+  }).success, true);
+  assertEquals(GatewayRequestSchema.safeParse({
     task: 'neural_ast',
     payload: { sourceCode: 'x'.repeat(20_001) },
   }).success, false);

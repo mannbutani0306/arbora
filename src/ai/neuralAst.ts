@@ -182,7 +182,8 @@ function validateASTWithZod(parsedJson: any): {
 /** Generates an AST through the AI gateway and retries once after schema validation fails. */
 export async function generateNeuralAst(
   sourceCode: string,
-  _apiKeyOverride?: string
+  _apiKeyOverride?: string,
+  signal?: AbortSignal
 ): Promise<NeuralAstResult> {
   const startTime = performance.now();
   let retried = false;
@@ -194,7 +195,7 @@ export async function generateNeuralAst(
       const parsed = await callGateway('neural_ast', {
         sourceCode,
         ...(attempt === 2 ? { validationError: lastError } : {}),
-      });
+      }, { signal });
       lastRawText = JSON.stringify(parsed);
 
       // Validate with Zod

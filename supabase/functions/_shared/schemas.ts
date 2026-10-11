@@ -44,6 +44,20 @@ export const GatewayRequestSchema = z.discriminatedUnion('task', [
       level: z.enum(['Beginner', 'Intermediate', 'Expert']),
     }).strict(),
   }).strict(),
+  z.object({
+    task: z.literal('repair_t5'),
+    payload: z.object({
+      code: z.string().min(1).max(8_192),
+      num_beams: z.number().int().min(1).max(8).optional(),
+      num_return: z.number().int().min(1).max(8).optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    task: z.literal('ast_t5'),
+    payload: z.object({
+      code: z.string().min(1).max(8_192),
+    }).strict(),
+  }).strict(),
 ]);
 
 export type GatewayRequest = z.infer<typeof GatewayRequestSchema>;
@@ -55,14 +69,20 @@ const EditSchema = z.object({
   text: z.string(),
 });
 
+const RepairCandidateSchema = z.object({
+  description: z.string(),
+  edits: z.array(EditSchema),
+  repairedCode: z.string(),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string(),
+});
+
 export const RepairResponseSchema = z.object({
-  candidates: z.array(z.object({
-    description: z.string(),
-    edits: z.array(EditSchema),
-    repairedCode: z.string(),
-    confidence: z.number().min(0).max(1),
-    rationale: z.string(),
-  })).max(3),
+  candidates: z.array(RepairCandidateSchema).max(3),
+});
+
+export const ArboraRepairResponseSchema = z.object({
+  candidates: z.array(RepairCandidateSchema).max(8),
 });
 
 const SpanSchema = z.object({
@@ -89,6 +109,14 @@ export const ExplanationResponseSchema = z.object({
   explanation: z.string(),
   rule: z.string(),
   analogy: z.string(),
+});
+
+export const ArboraAstResponseSchema = z.object({
+  ast_bracketed: z.string(),
+  is_valid: z.boolean(),
+  model_id: z.string(),
+  revision: z.string(),
+  latency_ms: z.number(),
 });
 
 export function getRateLimitWindow(nowMs: number, windowMs = 60 * 60 * 1000) {

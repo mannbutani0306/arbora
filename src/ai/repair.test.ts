@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   calculateEditDistance,
+  repairCode,
   verifyAndRankCandidates,
   logRepairAttempt,
   getRepairStats,
@@ -12,6 +13,9 @@ import { parse } from '../core/parser';
 import { classicalRepair } from '../core/classicalRepair';
 
 vi.mock('./gatewayClient', () => ({
+  AppError: class AppError extends Error {
+    constructor(public code: string, message: string) { super(message); }
+  },
   callGateway: vi.fn(),
   isAiAvailable: () => false,
 }));
@@ -97,6 +101,22 @@ describe('AI Repair Engine', () => {
     it('repairs a missing semicolon', () => {
       const result = classicalRepair('int run() { return 5 }');
       expect(result.some(({ repairedCode }) => parse(repairedCode).errors.length === 0)).toBe(true);
+    });
+
+    it('explicitly reports when a selected model engine falls back', async () => {
+      const sourceCode = 'int main() { return 0 }';
+      const parsed = parse(sourceCode);
+      const response = await repairCode({
+        sourceCode,
+        tokens: parsed.tokens,
+        errors: parsed.errors,
+        engine: 'arbora-t5',
+      });
+      expect(response.fellBackToClassical).toBe(true);
+      expect(response.message).toMatch(/unavailable|waking up/i);
+      expect(response.candidates.every((candidate) =>
+        candidate.verified === (parse(candidate.repairedCode).errors.length === 0)
+      )).toBe(true);
     });
 
     it('repairs a missing close parenthesis', () => {

@@ -10,7 +10,17 @@ import { ParseError, ParseResult, Token } from '../types/ast';
 import { classicalRepair } from '../core/classicalRepair';
 import { scoreRepair } from '../core/repairMetrics';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { callGateway, isAiAvailable } from './gatewayClient';
+import { callGateway, checkAiAvailability, isAiAvailable } from './gatewayClient';
+import {
+  createRepairEngines,
+  cachedRepair,
+  ENGINE_LABELS,
+  mergeEnsembleCandidates,
+  type RepairEngineChoice,
+  type RepairEngineId,
+} from './engines';
+import { trainNgram, ngramRepair } from '../core/ngramRepair';
+import { handwritten } from '../core/programGenerator';
 
 export interface RepairEdit {
   line: number;
@@ -30,6 +40,8 @@ export interface RepairCandidate {
   editDistance: number;
   remainingErrors: ParseError[];
   isFallback?: boolean;
+  engineId: RepairEngineId;
+  agreedBy?: RepairEngineId[];
 }
 
 export interface RepairResponse {
@@ -83,7 +95,6 @@ export interface RepairStatsSummary {
 }
 
 const STORAGE_KEY = 'arbora_repair_stats';
-const MODEL_NAME = 'AI gateway';
 
 /**
  * Calculates Levenshtein edit distance between two strings
@@ -186,6 +197,7 @@ function classicalCandidates(sourceCode: string, errors: ParseError[]): RepairCa
       editDistance: calculateEditDistance(sourceCode, candidate.repairedCode),
       remainingErrors: parsed.errors,
       isFallback: true,
+      engineId: 'classical',
     };
   });
 }
@@ -196,15 +208,23 @@ function classicalCandidates(sourceCode: string, errors: ParseError[]): RepairCa
  * 2. confidence descending
  * 3. smallest edit distance ascending
  */
+type RepairCandidateInput = {
+  description?: string;
+  edits?: Array<{
+    line?: number;
+    column?: number;
+    operation?: string;
+    text?: string;
+  }>;
+  repairedCode?: string;
+  confidence?: number;
+  rationale?: string;
+};
+
 export function verifyAndRankCandidates(
-  rawCandidates: Array<{
-    description?: string;
-    edits?: RepairEdit[];
-    repairedCode?: string;
-    confidence?: number;
-    rationale?: string;
-  }>,
-  originalSource: string
+  rawCandidates: RepairCandidateInput[],
+  originalSource: string,
+  engineId: RepairEngineId = 'gemini'
 ): RepairCandidate[] {
   const verifiedList: RepairCandidate[] = [];
 
@@ -220,7 +240,23 @@ export function verifyAndRankCandidates(
     verifiedList.push({
       id: `ai_candidate_${idx + 1}_${Date.now()}`,
       description: (c.description || 'Syntax fix').trim(),
-      edits: Array.isArray(c.edits) ? c.edits : [],
+      edits: Array.isArray(c.edits)
+        ? c.edits
+            .filter((edit): edit is RepairEdit =>
+              typeof edit?.operation === 'string' &&
+              typeof edit?.text === 'string' &&
+              typeof edit?.line === 'number' &&
+              typeof edit?.column === 'number'
+            )
+            .map((edit) => ({
+              line: edit.line ?? 1,
+              column: edit.column ?? 1,
+              operation: edit.operation === 'delete' || edit.operation === 'insert' || edit.operation === 'replace'
+                ? edit.operation
+                : 'insert',
+              text: edit.text ?? '',
+            }))
+        : [],
       repairedCode: code,
       confidence: typeof c.confidence === 'number' ? Math.max(0, Math.min(1, c.confidence)) : 0.8,
       rationale: (c.rationale || 'Adjusted syntax to conform with MiniC grammar.').trim(),
@@ -228,6 +264,8 @@ export function verifyAndRankCandidates(
       editDistance: distance,
       remainingErrors: parseResult.errors,
       isFallback: false,
+      engineId,
+      agreedBy: [engineId],
     });
   });
 
@@ -248,9 +286,197 @@ export function verifyAndRankCandidates(
   return verifiedList;
 }
 
-/**
- * Main syntax repair pipeline.
- */
+function normalizedCandidateKey(code: string): string {
+  return lex(code).tokens
+    .filter((token) => token.type !== 'EOF' && token.type !== 'COMMENT')
+    .map((token) => `${token.type}:${token.lexeme}`)
+    .join('\u0000');
+}
+
+const ngramModel = trainNgram(handwritten.map((program) =>
+  lex(program.code).tokens
+    .filter((token) => token.type !== 'EOF' && token.type !== 'COMMENT')
+    .map((token) => token.lexeme)
+));
+
+async function executeRepairEngine(
+  engine: RepairEngineChoice,
+  sourceCode: string,
+  errors: ParseError[],
+  tokens: Token[],
+  signal?: AbortSignal
+): Promise<RepairResponse> {
+  const started = performance.now();
+  if (engine === 'classical') {
+    const candidates = classicalCandidates(sourceCode, errors);
+    return {
+      candidates,
+      verifiedCandidate: candidates[0] ?? null,
+      bestCandidate: candidates[0] ?? null,
+      fellBackToClassical: false,
+      latencyMs: Math.round(performance.now() - started),
+      model: ENGINE_LABELS.classical,
+    };
+  }
+  if (engine === 'ngram') {
+    const rankedNgram = ngramRepair(sourceCode, ngramModel);
+    const ngramOrder = new Map(rankedNgram.map((candidate, index) => [candidate.repairedCode, index]));
+    const candidates = rankedNgram.map((candidate, index) => {
+      const parsed = parse(candidate.repairedCode);
+      return {
+        id: `ngram_${index + 1}`,
+        description: 'N-gram ranked repair',
+        edits: candidate.edits.map((edit) => {
+          const token = tokens[edit.tokenIndex];
+          return {
+            line: token?.line ?? 1,
+            column: token?.column ?? 1,
+            operation: edit.operation,
+            text: edit.text,
+          };
+        }),
+        repairedCode: candidate.repairedCode,
+        confidence: 0.5,
+        rationale: 'Classical candidates ranked by a trigram model trained on the handwritten MiniC set.',
+        verified: parsed.errors.length === 0,
+        editDistance: calculateEditDistance(sourceCode, candidate.repairedCode),
+        remainingErrors: parsed.errors,
+        engineId: 'ngram' as const,
+        agreedBy: ['ngram'] as RepairEngineId[],
+      };
+    });
+    candidates.sort((left, right) =>
+      Number(right.verified) - Number(left.verified) ||
+      (ngramOrder.get(left.repairedCode) ?? Number.MAX_SAFE_INTEGER) -
+      (ngramOrder.get(right.repairedCode) ?? Number.MAX_SAFE_INTEGER)
+    );
+    return {
+      candidates,
+      verifiedCandidate: candidates.find((candidate) => candidate.verified) ?? null,
+      bestCandidate: candidates[0] ?? null,
+      fellBackToClassical: false,
+      latencyMs: Math.round(performance.now() - started),
+      model: ENGINE_LABELS.ngram,
+    };
+  }
+
+  const modelRequest = async (selectedEngine: 'gemini' | 'arbora-t5') => {
+    if (!isAiAvailable() && !(await checkAiAvailability(signal))) {
+      throw new Error('AI gateway is offline.');
+    }
+    if (selectedEngine === 'arbora-t5') {
+      const response = await callGateway(
+        'repair_t5',
+        { code: sourceCode, num_beams: 8, num_return: 8 },
+        { signal }
+      );
+      return verifyAndRankCandidates(response.candidates, sourceCode, selectedEngine);
+    }
+    const response = await callGateway('repair', {
+      sourceCode,
+      tokens: tokens.map(({ line, column, lexeme }) => ({ line, column, lexeme })),
+      errors: errors.map(({ line, column, message, severity, expected, found }) => ({
+        line, column, message, severity, expected, found,
+      })),
+    }, { signal });
+    let candidates = verifyAndRankCandidates(response.candidates, sourceCode, selectedEngine);
+    if (!candidates.some((candidate) => candidate.verified) && candidates.length > 0) {
+      const first = candidates[0];
+      try {
+        const retry = await callGateway('repair', {
+          sourceCode,
+          tokens: tokens.map(({ line, column, lexeme }) => ({ line, column, lexeme })),
+          errors: errors.map(({ line, column, message, severity, expected, found }) => ({
+            line, column, message, severity, expected, found,
+          })),
+          retryCandidate: first.repairedCode,
+          retryErrors: first.remainingErrors.map((error) =>
+            `Line ${error.line}:${error.column} - ${error.message}`
+          ).join('\n'),
+        }, { signal });
+        const retryCandidates = verifyAndRankCandidates(retry.candidates, sourceCode, selectedEngine);
+        if (retryCandidates.some((candidate) => candidate.verified)) candidates = retryCandidates;
+        else candidates = [...candidates, ...retryCandidates];
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
+    }
+    return candidates;
+  };
+
+  if (engine === 'ensemble') {
+    const settled = await Promise.allSettled([
+      repairEngines.classical.repair(sourceCode, errors, tokens, { signal }),
+      repairEngines.ngram.repair(sourceCode, errors, tokens, { signal }),
+      repairEngines.gemini.repair(sourceCode, errors, tokens, { signal }),
+      repairEngines['arbora-t5'].repair(sourceCode, errors, tokens, { signal }),
+    ]);
+    const groups: RepairCandidate[][] = [];
+    const unavailable: string[] = [];
+    for (let index = 0; index < settled.length; index += 1) {
+      const outcome = settled[index];
+      if (outcome.status === 'fulfilled') {
+        groups.push(outcome.value.candidates);
+      } else if (index > 1) {
+        unavailable.push(index === 2 ? 'Gemini' : 'Arbora-T5');
+      }
+    }
+    const candidates = mergeEnsembleCandidates(groups).slice(0, 12);
+    const message = unavailable.length
+      ? `${unavailable.join(' and ')} unavailable; remaining engines ran.`
+      : undefined;
+    return {
+      candidates,
+      verifiedCandidate: candidates.find((candidate) => candidate.verified) ?? null,
+      bestCandidate: candidates[0] ?? null,
+      fellBackToClassical: false,
+      message,
+      latencyMs: Math.round(performance.now() - started),
+      model: ENGINE_LABELS.ensemble,
+    };
+  }
+
+  try {
+    const candidates = await modelRequest(engine);
+    const classical = candidates.some((candidate) => candidate.verified)
+      ? []
+      : classicalCandidates(sourceCode, errors);
+    const allCandidates = [...classical, ...candidates];
+    return {
+      candidates: allCandidates,
+      verifiedCandidate: allCandidates.find((candidate) => candidate.verified) ?? null,
+      bestCandidate: allCandidates[0] ?? null,
+      fellBackToClassical: classical.length > 0,
+      message: classical.length
+        ? candidates.length
+          ? 'Model proposals were not parser-verified; deterministic classical candidates are shown first.'
+          : 'Model unavailable; explicitly fell back to classical repair.'
+        : undefined,
+      latencyMs: Math.round(performance.now() - started),
+      model: ENGINE_LABELS[engine],
+    };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const candidates = classicalCandidates(sourceCode, errors);
+    const coldStart = Boolean(error && typeof error === 'object' && 'code' in error &&
+      (error as { code?: unknown }).code === 'MODEL_COLD_START');
+    return {
+      candidates,
+      verifiedCandidate: candidates[0] ?? null,
+      bestCandidate: candidates[0] ?? null,
+      fellBackToClassical: true,
+      message: coldStart
+        ? 'Model waking up, retry in 20 s. Using classical repair for this request.'
+        : `${ENGINE_LABELS[engine]} unavailable; explicitly fell back to classical repair.`,
+      latencyMs: Math.round(performance.now() - started),
+      model: ENGINE_LABELS.classical,
+    };
+  }
+}
+
+const repairEngines = createRepairEngines(executeRepairEngine);
+
+/** Run the selected proposal engine; every proposal is ranked after deterministic parsing. */
 export async function repairCode(params: {
   sourceCode: string;
   tokens: Token[];
@@ -258,173 +484,44 @@ export async function repairCode(params: {
   userId?: string | null;
   groundTruth?: string;
   errorType?: RepairContext['errorType'];
+  engine?: RepairEngineChoice;
+  signal?: AbortSignal;
 }): Promise<RepairResponse> {
-  const startTime = performance.now();
-  const { sourceCode, tokens, errors, userId, groundTruth, errorType = 'natural' } = params;
-
-  // If already zero errors, nothing to repair
+  const started = performance.now();
+  const {
+    sourceCode, tokens, errors, userId, groundTruth, errorType = 'natural',
+    engine = 'gemini', signal,
+  } = params;
   if (errors.length === 0) {
     return {
       candidates: [],
       verifiedCandidate: null,
       bestCandidate: null,
       fellBackToClassical: false,
-      latencyMs: Math.round(performance.now() - startTime),
-      model: MODEL_NAME,
+      latencyMs: Math.round(performance.now() - started),
+      model: ENGINE_LABELS[engine],
     };
   }
 
-  if (!isAiAvailable()) {
-    const candidates = classicalCandidates(sourceCode, errors);
-    const fallback = candidates[0] ?? null;
-    const latency = Math.round(performance.now() - startTime);
-
-    await logRepairAttempt(
-      {
-        source_length: sourceCode.length,
-        error_count: errors.length,
-        candidate_count: candidates.length,
-        verified_count: candidates.filter((candidate) => candidate.verified).length,
-        latency_ms: latency,
-        model: 'classical',
-        is_verified_success: Boolean(fallback),
-      },
-      userId,
-      { sourceCode, groundTruth, errorType, candidates, engine: 'classical' }
-    );
-
-    return {
-      candidates,
-      verifiedCandidate: fallback,
-      bestCandidate: fallback,
-      fellBackToClassical: true,
-      message: fallback ? 'Used deterministic classical repair.' : 'No verified classical repair found.',
-      latencyMs: latency,
-      model: 'classical',
-    };
-  }
-
-  try {
-    // First attempt
-    const response = await callGateway('repair', {
-      sourceCode,
-      tokens: tokens.map(({ line, column, lexeme }) => ({ line, column, lexeme })),
-      errors: errors.map(({ line, column, message, severity, expected, found }) => ({
-        line,
-        column,
-        message,
-        severity,
-        expected,
-        found,
-      })),
-    });
-    let candidates = verifyAndRankCandidates(response.candidates, sourceCode);
-    let verifiedCount = candidates.filter((c) => c.verified).length;
-
-    // Retry once if none verified
-    if (verifiedCount === 0 && candidates.length > 0) {
-      const unverifiedFirst = candidates[0];
-      const feedbackErrors = unverifiedFirst.remainingErrors
-        .map((e) => `Line ${e.line}:${e.column} - ${e.message}`)
-        .join('\n');
-
-      try {
-        const retryResponse = await callGateway('repair', {
-          sourceCode,
-          tokens: tokens.map(({ line, column, lexeme }) => ({ line, column, lexeme })),
-          errors: errors.map(({ line, column, message, severity, expected, found }) => ({
-            line,
-            column,
-            message,
-            severity,
-            expected,
-            found,
-          })),
-          retryCandidate: unverifiedFirst.repairedCode,
-          retryErrors: feedbackErrors,
-        });
-        const retryCandidates = verifyAndRankCandidates(retryResponse.candidates, sourceCode);
-
-        if (retryCandidates.some((c) => c.verified)) {
-          candidates = retryCandidates;
-          verifiedCount = candidates.filter((c) => c.verified).length;
-        } else if (retryCandidates.length > 0) {
-          candidates = retryCandidates;
-        }
-      } catch {
-        // Retry failed, proceed to classical fallback check
-      }
-    }
-
-    // If no AI candidate verifies, use deterministic classical repair.
-    let fellBack = false;
-    let fallbackMessage: string | undefined = undefined;
-
-    if (verifiedCount === 0) {
-      fellBack = true;
-      fallbackMessage = 'Fell back to deterministic classical repair.';
-      const fallbackCandidates = classicalCandidates(sourceCode, errors);
-      // Prepend or add fallback candidate
-      candidates = [...fallbackCandidates, ...candidates];
-    }
-
-    const latency = Math.round(performance.now() - startTime);
-    const verifiedCandidate = candidates.find((c) => c.verified) || null;
-    const bestCandidate = candidates[0] || null;
-
-    await logRepairAttempt(
-      {
-        source_length: sourceCode.length,
-        error_count: errors.length,
-        candidate_count: candidates.length,
-        verified_count: candidates.filter((candidate) => candidate.verified).length,
-        latency_ms: latency,
-        model: MODEL_NAME,
-        is_verified_success: Boolean(verifiedCandidate),
-      },
-      userId,
-      { sourceCode, groundTruth, errorType, candidates, engine: fellBack ? 'classical' : 'ai-gateway' }
-    );
-
-    return {
-      candidates,
-      verifiedCandidate,
-      bestCandidate,
-      fellBackToClassical: fellBack,
-      message: fallbackMessage,
-      latencyMs: latency,
-      model: MODEL_NAME,
-    };
-  } catch {
-    // In case of API failure / network outage, use deterministic classical repair.
-    const candidates = classicalCandidates(sourceCode, errors);
-    const fallback = candidates[0] ?? null;
-    const latency = Math.round(performance.now() - startTime);
-
-    await logRepairAttempt(
-      {
-        source_length: sourceCode.length,
-        error_count: errors.length,
-        candidate_count: candidates.length,
-        verified_count: candidates.filter((candidate) => candidate.verified).length,
-        latency_ms: latency,
-        model: 'classical',
-        is_verified_success: Boolean(fallback),
-      },
-      userId,
-      { sourceCode, groundTruth, errorType, candidates, engine: 'classical' }
-    );
-
-    return {
-      candidates,
-      verifiedCandidate: fallback,
-      bestCandidate: fallback,
-      fellBackToClassical: true,
-      message: fallback ? 'Used deterministic classical repair.' : 'No verified classical repair found.',
-      latencyMs: latency,
-      model: 'classical',
-    };
-  }
+  const response = engine === 'ensemble'
+    ? await cachedRepair(engine, sourceCode, errors, tokens, executeRepairEngine, signal)
+    : await repairEngines[engine].repair(sourceCode, errors, tokens, { signal });
+  if (signal?.aborted) return response;
+  await logRepairAttempt({
+    source_length: sourceCode.length,
+    error_count: errors.length,
+    candidate_count: response.candidates.length,
+    verified_count: response.candidates.filter((candidate) => candidate.verified).length,
+    latency_ms: response.latencyMs,
+    model: response.model,
+    is_verified_success: Boolean(response.verifiedCandidate),
+  }, userId, {
+    sourceCode, groundTruth, errorType, candidates: response.candidates,
+    engine: engine === 'ensemble'
+      ? 'ensemble'
+      : (response.fellBackToClassical ? 'classical' : engine),
+  });
+  return response;
 }
 
 async function hashSource(source: string): Promise<string> {

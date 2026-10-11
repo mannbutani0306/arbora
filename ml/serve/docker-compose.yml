@@ -1,0 +1,17 @@
+services:
+  arbora-t5:
+    build:
+      context: ../..
+      dockerfile: ml/serve/Dockerfile
+    ports:
+      - "7860:7860"
+    environment:
+      HF_REPO_REPAIR: ${HF_REPO_REPAIR:?set HF_REPO_REPAIR}
+      HF_REPO_AST: ${HF_REPO_AST:?set HF_REPO_AST}
+      HF_TOKEN: ${HF_TOKEN:-}
+      ARBORA_MODEL_TOKEN: ${ARBORA_MODEL_TOKEN:-}
+      HF_REVISION: ${HF_REVISION:-main}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      ARBORA_INT8: ${ARBORA_INT8:-false}
+      ARBORA_MAX_CONCURRENCY: ${ARBORA_MAX_CONCURRENCY:-1}
+      ARBORA_REQUEST_TIMEOUT_SECONDS: ${ARBORA_REQUEST_TIMEOUT_SECONDS:-120}

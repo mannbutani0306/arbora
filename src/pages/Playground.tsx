@@ -49,9 +49,7 @@ import {
   RepairCandidateCard,
   RepairSkeleton,
 } from '../components/RepairCandidateCard';
-import {
-  generateNeuralAst,
-} from '../ai/neuralAst';
+import { astEngines, type AstEngineId, type RepairEngineChoice } from '../ai/engines';
 import { checkAiAvailability, isAiAvailable } from '../ai/gatewayClient';
 import {
   compareASTs,
@@ -68,7 +66,7 @@ import { ExplanationContent } from '../ai/explain';
 import { ASTNode } from '../types/ast';
 
 type Mode = 'Strict' | 'Repair';
-type Engine = 'Classical' | 'Neural' | 'Compare';
+type Engine = 'Classical' | 'N-gram' | 'Gemini' | 'Arbora-T5' | 'Ensemble' | 'Compare';
 type ActiveTab = 'Tokens' | 'Trace' | 'AST' | 'Errors' | 'Compare' | 'Explain' | 'Metrics';
 
 const DEFAULT_CODE = `// MiniC Sample Program
@@ -346,6 +344,12 @@ export function Playground() {
   const [repairResponse, setRepairResponse] = useState<RepairResponse | null>(null);
   const [isRepairing, setIsRepairing] = useState<boolean>(false);
   const lastRepairedHash = useRef<string>('');
+  const repairControllerRef = useRef<AbortController | null>(null);
+  const astControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    repairControllerRef.current?.abort();
+    astControllerRef.current?.abort();
+  }, []);
 
   // Neural AST runner & Comparison generator
   const runNeuralComparison = useCallback(
@@ -359,44 +363,49 @@ export function Playground() {
       }
 
       if (!isAiAvailable() && !(await checkAiAvailability())) {
-        setEngine('Classical');
-        setActiveTab('AST');
         setNeuralAst(null);
         setComparisonMetrics(null);
-        toast.info('AI offline; using deterministic parser');
+        toast.info('AI offline; deterministic parser remains active.');
         return;
       }
 
+      astControllerRef.current?.abort();
+      const controller = new AbortController();
+      astControllerRef.current = controller;
       setIsComparing(true);
       try {
-        const neuralRes = await generateNeuralAst(src);
-        if (neuralRes.isValid && neuralRes.ast) {
-          setNeuralAst(neuralRes.ast);
+        const astEngineId: AstEngineId = engine === 'Arbora-T5' ? 'arbora-t5' : 'gemini';
+        const astResult = await astEngines[astEngineId].generate(src, { signal: controller.signal });
+        if (astResult.isValid && astResult.ast) {
+          setNeuralAst(astResult.ast);
           const metrics = compareASTs(
             classicalTree,
-            neuralRes.ast,
+            astResult.ast,
             parseDuration,
-            neuralRes.latencyMs
+            astResult.latencyMs
           );
           setComparisonMetrics(metrics);
-          toast.success('Trees compared');
+          toast.success(`${astEngines[astEngineId].label} trees compared`);
         } else {
-          toast.error(neuralRes.validationError || 'Neural AST error');
+          toast.error('AST model returned an invalid tree; deterministic parser output is unchanged.');
         }
       } catch (err: any) {
-        toast.error(err?.message || 'Comparison failed');
+        if (controller.signal.aborted) return;
+        toast.info(err?.code === 'MODEL_COLD_START'
+          ? 'Model waking up, retry in 20 s. Deterministic parser output is unchanged.'
+          : `${engine === 'Arbora-T5' ? 'Arbora-T5' : 'Gemini'} unavailable; deterministic parser output is unchanged.`);
       } finally {
-        setIsComparing(false);
+        if (astControllerRef.current === controller) setIsComparing(false);
       }
     },
-    [code, parseResult, parseDuration, toast]
+    [code, parseResult, parseDuration, toast, engine]
   );
 
   // Immediate run (e.g., Ctrl+Enter or Run button)
   const handleImmediateRun = useCallback(() => {
     triggerWorkerParse(code);
     toast.info('Ran parser');
-    if (engine === 'Neural' || engine === 'Compare') {
+    if (engine === 'Gemini' || engine === 'Arbora-T5' || engine === 'Compare') {
       runNeuralComparison(code);
     }
   }, [code, triggerWorkerParse, engine, runNeuralComparison, toast]);
@@ -404,12 +413,10 @@ export function Playground() {
   // Handle engine switcher
   const handleSelectEngine = (newEngine: Engine) => {
     setEngine(newEngine);
-    if (newEngine === 'Compare' || newEngine === 'Neural') {
+    if (newEngine === 'Compare' || newEngine === 'Gemini' || newEngine === 'Arbora-T5') {
       setActiveTab('Compare');
-      if (!neuralAst) {
-        runNeuralComparison(code);
-      }
-    } else if (newEngine === 'Classical' && activeTab === 'Compare') {
+      runNeuralComparison(code);
+    } else if (activeTab === 'Compare') {
       setActiveTab('Tokens');
     }
   };
@@ -423,25 +430,44 @@ export function Playground() {
       }
 
       const currentHash = `${code}__${parseResult.errors.length}`;
-      if (!forced && lastRepairedHash.current === currentHash) return;
-      lastRepairedHash.current = currentHash;
+      const selectedEngine: RepairEngineChoice = engine === 'Arbora-T5'
+        ? 'arbora-t5'
+        : engine === 'Gemini' || engine === 'Compare'
+          ? 'gemini'
+          : engine === 'N-gram'
+            ? 'ngram'
+            : engine === 'Ensemble'
+              ? 'ensemble'
+              : 'classical';
+      const fullRequestHash = `${currentHash}__${selectedEngine}`;
+      if (!forced && lastRepairedHash.current === fullRequestHash) return;
+      lastRepairedHash.current = fullRequestHash;
 
+      repairControllerRef.current?.abort();
+      const controller = new AbortController();
+      repairControllerRef.current = controller;
       setIsRepairing(true);
       try {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (controller.signal.aborted) return;
         const res = await repairCode({
           sourceCode: code,
           tokens,
           errors: parseResult.errors,
           userId: user?.id,
+          engine: selectedEngine,
+          signal: controller.signal,
         });
-        setRepairResponse(res);
-      } catch {
-        // Fallback or error handled internally
+        if (!controller.signal.aborted) setRepairResponse(res);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          toast.error(error instanceof Error ? error.message : 'Repair request failed.');
+        }
       } finally {
-        setIsRepairing(false);
+        if (repairControllerRef.current === controller) setIsRepairing(false);
       }
     },
-    [code, parseResult, tokens, user]
+    [code, parseResult, tokens, user, engine, toast]
   );
 
   // Trigger repair in Repair mode
@@ -914,7 +940,7 @@ export function Playground() {
 
           {/* Engine Selector */}
           <div className="flex items-center bg-stone-100 p-0.5 rounded-lg border border-[#E7E5E4]">
-            {(['Classical', 'Neural', 'Compare'] as Engine[]).map((e) => (
+            {(['Classical', 'N-gram', 'Gemini', 'Arbora-T5', 'Ensemble', 'Compare'] as Engine[]).map((e) => (
               <button
                 key={e}
                 type="button"
@@ -924,7 +950,14 @@ export function Playground() {
                     ? 'bg-white text-[#1C1917] shadow-xs'
                     : 'text-[#78716C] hover:text-[#1C1917]'
                 }`}
-                title={`Engine: ${e}`}
+                title={{
+                  Classical: 'Deterministic single-edit search',
+                  'N-gram': 'Classical candidates ranked by a trigram model',
+                  Gemini: 'Gemini repair proposals; parser-verified locally',
+                  'Arbora-T5': 'Arbora-T5 proposals; parser-verified locally',
+                  Ensemble: 'Run all repair engines and merge their proposals',
+                  Compare: 'Compare neural AST output with the deterministic parser',
+                }[e]}
               >
                 {e}
               </button>
@@ -1171,7 +1204,7 @@ export function Playground() {
           {/* TAB HEADERS (ONE-WORD LABELS) */}
           <div id="tour-tabs-bar" className="h-10 border-b border-[#E7E5E4] px-2 flex items-center gap-1 bg-[#FAFAF9] shrink-0 overflow-x-auto">
             {(
-              (engine === 'Neural' || engine === 'Compare'
+              (engine === 'Gemini' || engine === 'Arbora-T5' || engine === 'Compare'
                 ? ['Tokens', 'Trace', 'AST', 'Errors', 'Compare', 'Explain', 'Metrics']
                 : ['Tokens', 'Trace', 'AST', 'Errors', 'Explain', 'Metrics']
               ) as ActiveTab[]
@@ -1338,10 +1371,12 @@ export function Playground() {
                         {isRepairing && <RepairSkeleton />}
 
                         {/* Fallback message if classical recovery fallback triggered */}
-                        {repairResponse?.fellBackToClassical && !isRepairing && (
+                        {(repairResponse?.fellBackToClassical || repairResponse?.message) && !isRepairing && (
                           <div className="px-3 py-2 bg-stone-100 border border-stone-200 text-xs text-stone-700 rounded-lg flex items-center justify-between">
-                            <span>Fell back to deterministic classical repair.</span>
-                            <span className="text-[10px] font-mono text-stone-500">Heuristic</span>
+                            <span>{repairResponse.message ?? 'Fell back to deterministic classical repair.'}</span>
+                            <span className="text-[10px] font-mono text-stone-500">
+                              {repairResponse.fellBackToClassical ? 'Classical' : 'Notice'}
+                            </span>
                           </div>
                         )}
 

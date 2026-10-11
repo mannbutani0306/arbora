@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CheckCircle2, AlertCircle, Info, Sparkles, ArrowRight } from 'lucide-react';
 import { RepairCandidate } from '../ai/repair';
 import { RepairDiffViewer } from './RepairDiffViewer';
+import { ENGINE_LABELS } from '../ai/engines';
 
 interface RepairCandidateCardProps {
   candidate: RepairCandidate;
@@ -31,6 +32,17 @@ export function RepairCandidateCard({
           <h4 className="text-xs font-semibold text-[#1C1917] truncate">
             {candidate.description}
           </h4>
+          <span className="px-1.5 py-0.5 rounded bg-stone-100 text-[10px] text-stone-700 border border-stone-200 shrink-0">
+            {ENGINE_LABELS[candidate.engineId]}
+          </span>
+          {(candidate.agreedBy?.length ?? 0) > 1 && (
+            <span
+              className="text-[10px] text-[#78716C] truncate"
+              title={`Agreed by ${candidate.agreedBy?.map((engine) => ENGINE_LABELS[engine]).join(', ')}`}
+            >
+              Agreed: {candidate.agreedBy?.map((engine) => ENGINE_LABELS[engine]).join(', ')}
+            </span>
+          )}
 
           {/* Rationale Tooltip Icon */}
           <div className="relative inline-block shrink-0">

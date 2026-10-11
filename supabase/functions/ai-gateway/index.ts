@@ -1,4 +1,7 @@
+import { z } from 'npm:zod@4.6.5';
 import {
+  ArboraAstResponseSchema,
+  ArboraRepairResponseSchema,
   ExplanationResponseSchema,
   GatewayRequestSchema,
   NeuralAstResponseSchema,
@@ -11,6 +14,7 @@ import { enforceRateLimit, RateLimitError } from '../_shared/rateLimit.ts';
 
 const MAX_BODY_BYTES = 20 * 1024;
 const MODEL_TIMEOUT_MS = 25_000;
+const ARBORA_MODEL_TIMEOUT_MS = 20_000;
 
 const REPAIR_SYSTEM = `You are an expert compiler engineer specializing in syntax error recovery for the MiniC language.
 Your job is to repair broken source code with minimal, surgical edits.
@@ -145,6 +149,9 @@ async function readBody(request: Request): Promise<{ body: string; tooLarge: boo
 }
 
 function getModelRequest(request: GatewayRequest) {
+  if (request.task === 'repair_t5' || request.task === 'ast_t5') {
+    throw new Error('Arbora-T5 requests are forwarded separately.');
+  }
   if (request.task === 'repair') {
     const errorContext = request.payload.errors.length === 0
       ? 'No errors reported.'
@@ -285,12 +292,18 @@ Audience: ${level}`;
 }
 
 function validateModelOutput(task: GatewayRequest['task'], value: unknown): boolean {
+  if (task === 'repair_t5') return RepairResponseSchema.safeParse(value).success;
+  if (task === 'ast_t5') return ArboraAstResponseSchema.safeParse(value).success;
   if (task === 'repair') return RepairResponseSchema.safeParse(value).success;
   if (task === 'neural_ast') return NeuralAstResponseSchema.safeParse(value).success;
   return ExplanationResponseSchema.safeParse(value).success;
 }
 
 async function generateModelJson(request: GatewayRequest): Promise<unknown> {
+  if (request.task === 'repair_t5' || request.task === 'ast_t5') {
+    return callArboraModel(request);
+  }
+
   const apiKey = Deno.env.get('GEMINI_API_KEY');
   if (!apiKey) throw new Error('AI model is not configured.');
 
@@ -324,6 +337,65 @@ async function generateModelJson(request: GatewayRequest): Promise<unknown> {
       throw new Error('Model request failed.');
     } finally {
       clearTimeout(timeout);
+    }
+
+    async function callArboraModel(
+      request: Extract<GatewayRequest, { task: 'repair_t5' | 'ast_t5' }>,
+    ): Promise<unknown> {
+      const baseUrl = Deno.env.get('ARBORA_MODEL_URL')?.trim().replace(/\/+$/, '');
+      if (!baseUrl) throw new Error('Arbora-T5 model service is not configured.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), ARBORA_MODEL_TIMEOUT_MS);
+      try {
+        const endpoint = request.task === 'repair_t5' ? '/repair' : '/ast';
+        const response = await fetch(`${baseUrl}${endpoint}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(Deno.env.get('ARBORA_MODEL_TOKEN')
+              ? { Authorization: `Bearer ${Deno.env.get('ARBORA_MODEL_TOKEN')}` }
+              : {}),
+          },
+          body: JSON.stringify(request.payload),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          if (response.status === 503 || response.status === 504) {
+            throw new DOMException('Model waking up.', 'ModelColdStartError');
+          }
+          throw new Error('Arbora-T5 model request failed.');
+        }
+        const body: unknown = await response.json();
+        if (request.task === 'repair_t5') {
+          const parsed = z.object({
+            candidates: z.array(z.object({ code: z.string(), score: z.number() })).max(8),
+          }).safeParse(body);
+          if (!parsed.success) throw new Error('Arbora-T5 repair response did not match its schema.');
+          const output = {
+            candidates: parsed.data.candidates.map((candidate, index) => ({
+              description: `Arbora-T5 proposal ${index + 1}`,
+              edits: [],
+              repairedCode: candidate.code,
+              confidence: 0.5,
+              rationale: `Model sequence score: ${candidate.score.toFixed(3)} (not calibrated confidence).`,
+            })),
+          };
+          if (!ArboraRepairResponseSchema.safeParse(output).success) {
+            throw new Error('Arbora-T5 repair response did not match the gateway schema.');
+          }
+          return output;
+        }
+        const parsed = ArboraAstResponseSchema.safeParse(body);
+        if (!parsed.success) throw new Error('Arbora-T5 AST response did not match its schema.');
+        return parsed.data;
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new DOMException('Model waking up.', 'ModelColdStartError');
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
     if (response.status >= 500 && attempt === 0) continue;
@@ -369,8 +441,10 @@ Deno.serve(async (request) => {
       Deno.env.get('SUPABASE_URL')
         && Deno.env.get('SUPABASE_ANON_KEY')
         && Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-        && Deno.env.get('GEMINI_API_KEY')
-        && Deno.env.get('GEMINI_MODEL'),
+        && (
+          (Deno.env.get('GEMINI_API_KEY') && Deno.env.get('GEMINI_MODEL'))
+          || Deno.env.get('ARBORA_MODEL_URL')
+        ),
     );
     return jsonResponse(
       configured ? { status: 'ok' } : { code: 'MODEL_ERROR', message: 'AI gateway is not configured.' },
@@ -439,8 +513,19 @@ Deno.serve(async (request) => {
     const output = await generateModelJson(parsedRequest.data);
     return jsonResponse(output, 200, corsHeaders);
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'ModelColdStartError') {
+      return jsonResponse(
+        { code: 'MODEL_COLD_START', message: 'Model waking up, retry in 20 s.' },
+        503,
+        { ...corsHeaders, 'Retry-After': '20' },
+      );
+    }
     if (error instanceof DOMException && error.name === 'TimeoutError') {
-      return jsonResponse({ code: 'TIMEOUT', message: 'AI request timed out.' }, 504, corsHeaders);
+      return jsonResponse(
+        { code: 'MODEL_COLD_START', message: 'Model waking up, retry in 20 s.' },
+        503,
+        { ...corsHeaders, 'Retry-After': '20' },
+      );
     }
     return jsonResponse({ code: 'MODEL_ERROR', message: 'AI request failed.' }, 502, corsHeaders);
   }

@@ -60,6 +60,29 @@ describe('AI gateway client', () => {
       .rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
 
+  it('maps Arbora-T5 cold starts to a typed retryable error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 'MODEL_COLD_START',
+      message: 'Model waking up, retry in 20 s.',
+    }), { status: 503 })));
+
+    await expect(callGateway('repair_t5', { code: 'int main() {}' }))
+      .rejects.toMatchObject({ code: 'MODEL_COLD_START', message: 'Model waking up, retry in 20 s.' });
+  });
+
+  it('validates Arbora-T5 AST responses', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ast_bracketed: '(Program)',
+      is_valid: true,
+      model_id: 'owner/ast',
+      revision: 'abc123',
+      latency_ms: 10,
+    }), { status: 200 })));
+
+    await expect(callGateway('ast_t5', { code: 'int main() {}' }))
+      .resolves.toMatchObject({ ast_bracketed: '(Program)', is_valid: true });
+  });
+
   it('maps request timeouts to TIMEOUT', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn((_url: RequestInfo | URL, options?: RequestInit) =>
