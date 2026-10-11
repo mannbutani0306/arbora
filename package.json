@@ -28,6 +28,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "format": "prettier --write .",
     "sync:results": "tsx scripts/sync-results.ts",
+    "readme:results": "tsx scripts/readme-results.ts",
+    "capture:media": "tsx scripts/capture-media.ts",
     "bench:baselines": "tsx tools/generate-dataset.ts --n 1000 --seed 42 --out ml/data/raw.jsonl && tsx tools/split-dataset.ts --in ml/data/raw.jsonl --seed 42 --out-dir ml/data && tsx tools/run-baselines.ts --test ml/data/test.jsonl --train ml/data/train.jsonl --out results/baselines.json"
   },
   "dependencies": {
