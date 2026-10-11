@@ -8,9 +8,14 @@ import { AuthProvider } from './lib/AuthContext';
 
 // Lazy-loaded routes for performance
 const Landing = lazy(() => import('./pages/Landing').then((m) => ({ default: m.Landing })));
-const Playground = lazy(() => import('./pages/Playground').then((m) => ({ default: m.Playground })));
+const Playground = lazy(() =>
+  import('./pages/Playground').then((m) => ({ default: m.Playground })),
+);
 const History = lazy(() => import('./pages/History').then((m) => ({ default: m.History })));
-const Benchmarks = lazy(() => import('./pages/Benchmarks').then((m) => ({ default: m.Benchmarks })));
+const Benchmarks = lazy(() =>
+  import('./pages/Benchmarks').then((m) => ({ default: m.Benchmarks })),
+);
+const Research = lazy(() => import('./pages/Research').then((m) => ({ default: m.Research })));
 const Docs = lazy(() => import('./pages/Docs').then((m) => ({ default: m.Docs })));
 const Auth = lazy(() => import('./pages/Auth').then((m) => ({ default: m.Auth })));
 const Share = lazy(() => import('./pages/Share').then((m) => ({ default: m.Share })));
@@ -51,9 +56,7 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
-          {!splashFinished && (
-            <Splash onComplete={() => setSplashFinished(true)} />
-          )}
+          {!splashFinished && <Splash onComplete={() => setSplashFinished(true)} />}
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Layout />}>
@@ -93,6 +96,16 @@ export default function App() {
                     <ErrorBoundary>
                       <Suspense fallback={<PageLoading />}>
                         <Benchmarks />
+                      </Suspense>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="research"
+                  element={
+                    <ErrorBoundary>
+                      <Suspense fallback={<PageLoading />}>
+                        <Research />
                       </Suspense>
                     </ErrorBoundary>
                   }

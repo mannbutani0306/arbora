@@ -17,6 +17,7 @@ import { injectSingleTokenError, ErrorInjectionType } from './errorInjector';
 import { generateUniquePrograms } from './programGenerator';
 import { classicalRepair } from './classicalRepair';
 import { repairCode, RepairResponse } from '../ai/repair';
+import type { RepairEngineChoice } from '../ai/engines';
 import { generateNeuralAst, NeuralAstResult } from '../ai/neuralAst';
 import { compareASTs, ComparisonMetrics } from './compare';
 import { scoreRepair } from './repairMetrics';
@@ -56,6 +57,7 @@ export interface BenchmarkItemResult {
 
 export interface BenchmarkSuiteSummary {
   id: string;
+  engine?: RepairEngineChoice;
   timestamp: number;
   durationMs: number;
   totalPrograms: number;
@@ -102,10 +104,7 @@ export interface BenchmarkProgress {
 /**
  * Retries an async action on rate limits (429 or RESOURCE_EXHAUSTED) with exponential backoff.
  */
-async function retryOnRateLimit<T>(
-  action: () => Promise<T>,
-  maxRetries: number = 3
-): Promise<T> {
+async function retryOnRateLimit<T>(action: () => Promise<T>, maxRetries: number = 3): Promise<T> {
   let attempt = 0;
   while (attempt < maxRetries) {
     try {
@@ -134,7 +133,9 @@ async function retryOnRateLimit<T>(
  * Loads valid benchmark programs:
  * All Supabase samples EXCEPT category/difficulty 'broken' or 'malformed' + 20 generated programs.
  */
-export async function loadBenchmarkDataset(): Promise<Array<{ id: string; name: string; category: string; code: string }>> {
+export async function loadBenchmarkDataset(): Promise<
+  Array<{ id: string; name: string; category: string; code: string }>
+> {
   const result: Array<{ id: string; name: string; category: string; code: string }> = [];
 
   // 1. Fetch Supabase samples
@@ -143,12 +144,7 @@ export async function loadBenchmarkDataset(): Promise<Array<{ id: string; name: 
     const validSamples = samples.filter((s) => {
       const cat = (s.category || '').toLowerCase();
       const diff = (s.difficulty || '').toLowerCase();
-      return (
-        cat !== 'broken' &&
-        cat !== 'malformed' &&
-        diff !== 'broken' &&
-        diff !== 'malformed'
-      );
+      return cat !== 'broken' && cat !== 'malformed' && diff !== 'broken' && diff !== 'malformed';
     });
 
     for (const sample of validSamples) {
@@ -189,10 +185,11 @@ export async function loadBenchmarkDataset(): Promise<Array<{ id: string; name: 
 export async function runBenchmarkSuite(params: {
   concurrency?: number;
   userId?: string | null;
+  engine?: RepairEngineChoice;
   onProgress?: (progress: BenchmarkProgress) => void;
   checkCancelled?: () => boolean;
 }): Promise<BenchmarkSuiteSummary> {
-  const { concurrency = 2, userId, onProgress, checkCancelled } = params;
+  const { concurrency = 2, userId, engine = 'gemini', onProgress, checkCancelled } = params;
   const suiteStartTime = performance.now();
 
   onProgress?.({
@@ -216,7 +213,7 @@ export async function runBenchmarkSuite(params: {
   // Process item helper
   async function processItem(
     item: { id: string; name: string; category: string; code: string },
-    index: number
+    index: number,
   ): Promise<BenchmarkItemResult> {
     if (checkCancelled?.()) {
       throw new Error('Benchmark cancelled');
@@ -253,9 +250,10 @@ export async function runBenchmarkSuite(params: {
           tokens: mutatedParse.tokens,
           errors: mutatedParse.errors,
           userId,
+          engine,
           groundTruth: item.code,
           errorType: injection.errorType,
-        })
+        }),
       );
 
       aiRepairLatencyMs = repairRes.latencyMs;
@@ -269,7 +267,7 @@ export async function runBenchmarkSuite(params: {
       aiRawTop3Exact = repairScore.top3Exact;
       aiVerifiedTop3Exact = scoreRepair(
         aiCandidates.filter((candidate) => candidate.verified),
-        item.code
+        item.code,
       ).top3Exact;
     } catch {
       // In case of network / timeout, defaults remain false
@@ -283,9 +281,7 @@ export async function runBenchmarkSuite(params: {
     let neuralAstLatencyMs = 0;
 
     try {
-      const neuralRes: NeuralAstResult = await retryOnRateLimit(() =>
-        generateNeuralAst(item.code)
-      );
+      const neuralRes: NeuralAstResult = await retryOnRateLimit(() => generateNeuralAst(item.code));
 
       neuralAstValid = neuralRes.isValid;
       neuralAstLatencyMs = neuralRes.latencyMs;
@@ -393,7 +389,7 @@ export async function runBenchmarkSuite(params: {
       const matching = results.filter((item) => item.errorType === type);
       const exact = matching.filter((item) => item.aiRepairTop1Exact).length;
       return [type, matching.length ? Math.round((exact / matching.length) * 100) : 0];
-    })
+    }),
   ) as BenchmarkSuiteSummary['aiRepair']['top1ExactRateByErrorType'];
 
   // Neural AST
@@ -408,9 +404,15 @@ export async function runBenchmarkSuite(params: {
   const validityRate = Math.round((validNeuralCount / totalCount) * 100);
 
   // Ablation
-  const b1Top1ExactRate = Math.round((results.filter((r) => r.b1Top1Exact).length / totalCount) * 100);
-  const aiRawTop3ExactRate = Math.round((results.filter((r) => r.aiRawTop3Exact).length / totalCount) * 100);
-  const aiVerifiedTop3ExactRate = Math.round((results.filter((r) => r.aiVerifiedTop3Exact).length / totalCount) * 100);
+  const b1Top1ExactRate = Math.round(
+    (results.filter((r) => r.b1Top1Exact).length / totalCount) * 100,
+  );
+  const aiRawTop3ExactRate = Math.round(
+    (results.filter((r) => r.aiRawTop3Exact).length / totalCount) * 100,
+  );
+  const aiVerifiedTop3ExactRate = Math.round(
+    (results.filter((r) => r.aiVerifiedTop3Exact).length / totalCount) * 100,
+  );
 
   onProgress?.({
     completed: total,
@@ -422,6 +424,7 @@ export async function runBenchmarkSuite(params: {
 
   return {
     id: `bench_${Date.now()}`,
+    engine,
     timestamp: Date.now(),
     durationMs,
     totalPrograms: results.length,

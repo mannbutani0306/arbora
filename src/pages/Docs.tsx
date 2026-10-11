@@ -43,7 +43,7 @@ export function Docs() {
         p.id.toLowerCase().includes(q) ||
         p.lhs.toLowerCase().includes(q) ||
         p.rhs.join(' ').toLowerCase().includes(q) ||
-        (p.description && p.description.toLowerCase().includes(q))
+        (p.description && p.description.toLowerCase().includes(q)),
     );
   }, [grammar, cfgSearch]);
 
@@ -53,7 +53,9 @@ export function Docs() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E7E5E4] pb-4">
         <div>
           <h1 className="text-xl font-semibold text-[#1C1917]">Compiler docs</h1>
-          <p className="text-xs text-[#78716C] mt-0.5">MiniC context-free grammar, architecture, and specifications.</p>
+          <p className="text-xs text-[#78716C] mt-0.5">
+            MiniC context-free grammar, architecture, and specifications.
+          </p>
         </div>
 
         {/* Tab Toggle */}
@@ -123,14 +125,61 @@ export function Docs() {
               <div className="text-[11px] font-medium text-[#78716C]">LL(1) Conflicts</div>
               <div className="text-lg font-mono font-semibold text-amber-600 mt-0.5 flex items-center gap-1.5">
                 <span>{analysis.conflicts.length}</span>
-                {analysis.conflicts.length > 0 && (
-                  <span className="text-[10px] font-sans font-medium px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
-                    Resolved by Pratt
-                  </span>
-                )}
+                <span
+                  className={`text-[10px] font-sans font-medium px-1.5 py-0.2 rounded border ${
+                    analysis.isLL1
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}
+                >
+                  {analysis.isLL1 ? 'LL(1)' : 'Not LL(1)'}
+                </span>
               </div>
             </div>
           </div>
+
+          <section className="overflow-hidden rounded-xl border border-[#E7E5E4] bg-white shadow-2xs">
+            <div className="border-b border-[#E7E5E4] p-3.5">
+              <h2 className="text-xs font-semibold text-[#1C1917]">
+                Predictive conflicts ({analysis.conflicts.length})
+              </h2>
+              <p className="mt-1 text-[11px] text-[#78716C]">
+                The parser is hand-written recursive descent and validated against this grammar; it
+                resolves these cells with lookahead and greedy parsing rules.
+              </p>
+            </div>
+            {analysis.conflicts.length === 0 ? (
+              <p className="p-3 text-xs text-[#78716C]">No conflicting table cells.</p>
+            ) : (
+              <div className="max-h-64 overflow-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-stone-50 text-[#78716C]">
+                    <tr>
+                      <th className="p-2.5">Non-terminal</th>
+                      <th className="p-2.5">Lookahead</th>
+                      <th className="p-2.5">Kind</th>
+                      <th className="p-2.5">Rules</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.conflicts.map((conflict) => (
+                      <tr
+                        key={`${conflict.nonTerminal}-${conflict.lookahead}`}
+                        className="border-t border-[#E7E5E4]"
+                      >
+                        <td className="p-2.5 font-mono">{conflict.nonTerminal}</td>
+                        <td className="p-2.5 font-mono">{conflict.lookahead}</td>
+                        <td className="p-2.5">{conflict.reason.replace('_', '–')}</td>
+                        <td className="p-2.5 font-mono">
+                          {conflict.conflictingRules.map((rule) => rule.id).join(', ')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
           {/* 1. MINIC CFG TABLE */}
           <div className="bg-white rounded-xl border border-[#E7E5E4] shadow-2xs overflow-hidden">
@@ -342,7 +391,7 @@ export function Docs() {
                         {lookaheads.map((term) => {
                           const rules: ProductionRule[] = analysis.table[nt]?.[term] || [];
                           const conflict = analysis.conflicts.find(
-                            (c) => c.nonTerminal === nt && c.lookahead === term
+                            (c) => c.nonTerminal === nt && c.lookahead === term,
                           );
 
                           if (rules.length === 0) {
@@ -418,44 +467,172 @@ export function Docs() {
             <div className="p-3 bg-[#FAFAF9] border border-[#E7E5E4] rounded-lg overflow-x-auto">
               <svg viewBox="0 0 760 110" className="w-full min-w-[680px] h-24 font-sans text-xs">
                 {/* Stage 1: Source */}
-                <rect x="10" y="30" width="100" height="50" rx="8" fill="#FFFFFF" stroke="#E7E5E4" strokeWidth="1.5" />
-                <text x="60" y="52" textAnchor="middle" fill="#1C1917" fontWeight="600" fontSize="11">Source Code</text>
-                <text x="60" y="67" textAnchor="middle" fill="#78716C" fontSize="9">MiniC (.c)</text>
+                <rect
+                  x="10"
+                  y="30"
+                  width="100"
+                  height="50"
+                  rx="8"
+                  fill="#FFFFFF"
+                  stroke="#E7E5E4"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x="60"
+                  y="52"
+                  textAnchor="middle"
+                  fill="#1C1917"
+                  fontWeight="600"
+                  fontSize="11"
+                >
+                  Source Code
+                </text>
+                <text x="60" y="67" textAnchor="middle" fill="#78716C" fontSize="9">
+                  MiniC (.c)
+                </text>
 
                 {/* Arrow 1 */}
-                <path d="M 110 55 L 145 55" stroke="#78716C" strokeWidth="1.5" markerEnd="url(#arrow)" />
+                <path
+                  d="M 110 55 L 145 55"
+                  stroke="#78716C"
+                  strokeWidth="1.5"
+                  markerEnd="url(#arrow)"
+                />
 
                 {/* Stage 2: Lexer */}
-                <rect x="150" y="30" width="105" height="50" rx="8" fill="#ECFDF5" stroke="#A7F3D0" strokeWidth="1.5" />
-                <text x="202" y="52" textAnchor="middle" fill="#065F46" fontWeight="600" fontSize="11">Lexer</text>
-                <text x="202" y="67" textAnchor="middle" fill="#047857" fontSize="9">Token Stream</text>
+                <rect
+                  x="150"
+                  y="30"
+                  width="105"
+                  height="50"
+                  rx="8"
+                  fill="#ECFDF5"
+                  stroke="#A7F3D0"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x="202"
+                  y="52"
+                  textAnchor="middle"
+                  fill="#065F46"
+                  fontWeight="600"
+                  fontSize="11"
+                >
+                  Lexer
+                </text>
+                <text x="202" y="67" textAnchor="middle" fill="#047857" fontSize="9">
+                  Token Stream
+                </text>
 
                 {/* Arrow 2 */}
-                <path d="M 255 55 L 290 55" stroke="#78716C" strokeWidth="1.5" markerEnd="url(#arrow)" />
+                <path
+                  d="M 255 55 L 290 55"
+                  stroke="#78716C"
+                  strokeWidth="1.5"
+                  markerEnd="url(#arrow)"
+                />
 
                 {/* Stage 3: Parser */}
-                <rect x="295" y="30" width="120" height="50" rx="8" fill="#FFFFFF" stroke="#E7E5E4" strokeWidth="1.5" />
-                <text x="355" y="52" textAnchor="middle" fill="#1C1917" fontWeight="600" fontSize="11">Pratt Parser</text>
-                <text x="355" y="67" textAnchor="middle" fill="#78716C" fontSize="9">Recursive Descent</text>
+                <rect
+                  x="295"
+                  y="30"
+                  width="120"
+                  height="50"
+                  rx="8"
+                  fill="#FFFFFF"
+                  stroke="#E7E5E4"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x="355"
+                  y="52"
+                  textAnchor="middle"
+                  fill="#1C1917"
+                  fontWeight="600"
+                  fontSize="11"
+                >
+                  Pratt Parser
+                </text>
+                <text x="355" y="67" textAnchor="middle" fill="#78716C" fontSize="9">
+                  Recursive Descent
+                </text>
 
                 {/* Arrow 3 */}
-                <path d="M 415 55 L 450 55" stroke="#78716C" strokeWidth="1.5" markerEnd="url(#arrow)" />
+                <path
+                  d="M 415 55 L 450 55"
+                  stroke="#78716C"
+                  strokeWidth="1.5"
+                  markerEnd="url(#arrow)"
+                />
 
                 {/* Stage 4: AST */}
-                <rect x="455" y="30" width="100" height="50" rx="8" fill="#ECFDF5" stroke="#A7F3D0" strokeWidth="1.5" />
-                <text x="505" y="52" textAnchor="middle" fill="#065F46" fontWeight="600" fontSize="11">AST Tree</text>
-                <text x="505" y="67" textAnchor="middle" fill="#047857" fontSize="9">JSON / DOT</text>
+                <rect
+                  x="455"
+                  y="30"
+                  width="100"
+                  height="50"
+                  rx="8"
+                  fill="#ECFDF5"
+                  stroke="#A7F3D0"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x="505"
+                  y="52"
+                  textAnchor="middle"
+                  fill="#065F46"
+                  fontWeight="600"
+                  fontSize="11"
+                >
+                  AST Tree
+                </text>
+                <text x="505" y="67" textAnchor="middle" fill="#047857" fontSize="9">
+                  JSON / DOT
+                </text>
 
                 {/* Arrow 4 */}
-                <path d="M 555 55 L 590 55" stroke="#78716C" strokeWidth="1.5" markerEnd="url(#arrow)" />
+                <path
+                  d="M 555 55 L 590 55"
+                  stroke="#78716C"
+                  strokeWidth="1.5"
+                  markerEnd="url(#arrow)"
+                />
 
                 {/* Stage 5: AI Engine */}
-                <rect x="595" y="30" width="150" height="50" rx="8" fill="#EEF2FF" stroke="#C7D2FE" strokeWidth="1.5" />
-                <text x="670" y="52" textAnchor="middle" fill="#3730A3" fontWeight="600" fontSize="11">AI Synthesis</text>
-                <text x="670" y="67" textAnchor="middle" fill="#4F46E5" fontSize="9">Repair &amp; Explain</text>
+                <rect
+                  x="595"
+                  y="30"
+                  width="150"
+                  height="50"
+                  rx="8"
+                  fill="#EEF2FF"
+                  stroke="#C7D2FE"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x="670"
+                  y="52"
+                  textAnchor="middle"
+                  fill="#3730A3"
+                  fontWeight="600"
+                  fontSize="11"
+                >
+                  AI Synthesis
+                </text>
+                <text x="670" y="67" textAnchor="middle" fill="#4F46E5" fontSize="9">
+                  Repair &amp; Explain
+                </text>
 
                 <defs>
-                  <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <marker
+                    id="arrow"
+                    viewBox="0 0 10 10"
+                    refX="6"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
                     <path d="M 0 1 L 8 5 L 0 9 z" fill="#78716C" />
                   </marker>
                 </defs>
@@ -482,7 +659,9 @@ export function Docs() {
                 <tbody className="divide-y divide-[#E7E5E4]/60 font-mono text-[11px]">
                   <tr>
                     <td className="py-2 px-3 font-sans font-medium text-[#1C1917]">Types</td>
-                    <td className="py-2 px-3 text-[#78716C]">int, float, bool, char, string, void</td>
+                    <td className="py-2 px-3 text-[#78716C]">
+                      int, float, bool, char, string, void
+                    </td>
                     <td className="py-2 px-3 text-right text-emerald-800">int count = 0;</td>
                   </tr>
                   <tr>
@@ -492,12 +671,16 @@ export function Docs() {
                   </tr>
                   <tr>
                     <td className="py-2 px-3 font-sans font-medium text-[#1C1917]">Functions</td>
-                    <td className="py-2 px-3 text-[#78716C]">Typed parameters, return statements</td>
+                    <td className="py-2 px-3 text-[#78716C]">
+                      Typed parameters, return statements
+                    </td>
                     <td className="py-2 px-3 text-right text-emerald-800">int add(int a, int b)</td>
                   </tr>
                   <tr>
                     <td className="py-2 px-3 font-sans font-medium text-[#1C1917]">Operators</td>
-                    <td className="py-2 px-3 text-[#78716C]">+ - * / % &amp;&amp; || == != &lt; &lt;= &gt; &gt;=</td>
+                    <td className="py-2 px-3 text-[#78716C]">
+                      + - * / % &amp;&amp; || == != &lt; &lt;= &gt; &gt;=
+                    </td>
                     <td className="py-2 px-3 text-right text-emerald-800">x * x + y * y</td>
                   </tr>
                   <tr>

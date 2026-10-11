@@ -11,6 +11,7 @@ export function Navbar() {
     { label: 'Playground', to: '/playground' },
     { label: 'History', to: '/history' },
     { label: 'Benchmarks', to: '/benchmarks' },
+    { label: 'Research', to: '/research' },
     { label: 'Docs', to: '/docs' },
   ];
 
@@ -78,4 +79,3 @@ export function Navbar() {
     </header>
   );
 }
-

@@ -177,6 +177,17 @@ export function Landing() {
           })}
         </div>
       </section>
+      <div className="mt-auto border-t border-[#E7E5E4] bg-white py-4">
+        <div className="mx-auto flex max-w-6xl justify-end px-6">
+          <Link
+            to="/research"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[#A7F3D0] bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+          >
+            Open results
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

@@ -19,6 +19,9 @@ export function Footer() {
           <Link to="/benchmarks" className="hover:text-[#1C1917] transition-colors">
             Benchmarks
           </Link>
+          <Link to="/research" className="hover:text-[#1C1917] transition-colors">
+            Research
+          </Link>
           <Link to="/docs" className="hover:text-[#1C1917] transition-colors">
             Docs
           </Link>

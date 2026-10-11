@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
+    "build": "npm run sync:results && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "typecheck": "tsc --noEmit",
@@ -21,6 +21,7 @@
     "test:coverage": "vitest run --coverage",
     "test:deno": "deno test --no-lock supabase/functions/_shared",
     "format": "prettier --write .",
+    "sync:results": "tsx scripts/sync-results.ts",
     "bench:baselines": "tsx tools/generate-dataset.ts --n 1000 --seed 42 --out ml/data/raw.jsonl && tsx tools/split-dataset.ts --in ml/data/raw.jsonl --seed 42 --out-dir ml/data && tsx tools/run-baselines.ts --test ml/data/test.jsonl --train ml/data/train.jsonl --out results/baselines.json"
   },
   "dependencies": {

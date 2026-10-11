@@ -67,7 +67,7 @@ function setLocalBenchmarks(items: BenchmarkRunRecord[]) {
  */
 export async function saveAnalysis(
   input: SaveAnalysisInput,
-  userId?: string | null
+  userId?: string | null,
 ): Promise<AnalysisRecord> {
   const payload = {
     title: input.title || 'Untitled AST',
@@ -148,10 +148,7 @@ export async function listAnalyses(userId?: string | null): Promise<AnalysisReco
     return local;
   }
 
-  let query = supabase
-    .from('analyses')
-    .select('*')
-    .order('created_at', { ascending: false });
+  let query = supabase.from('analyses').select('*').order('created_at', { ascending: false });
 
   if (userId) {
     query = query.eq('user_id', userId);
@@ -204,7 +201,7 @@ export async function deleteAnalysis(id: string): Promise<void> {
  */
 export async function setPublic(
   id: string,
-  isPublic: boolean
+  isPublic: boolean,
 ): Promise<{ share_slug: string | null }> {
   if (!isSupabaseConfigured) {
     const share_slug = isPublic ? generateShareSlug() : null;
@@ -314,7 +311,7 @@ export async function listSamples(): Promise<SampleRecord[]> {
 export async function saveBenchmarkRun(
   suiteName: string,
   results: any,
-  userId?: string | null
+  userId?: string | null,
 ): Promise<BenchmarkRunRecord> {
   const payload = {
     suite_name: suiteName,
@@ -323,7 +320,7 @@ export async function saveBenchmarkRun(
     created_at: new Date().toISOString(),
   };
 
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !userId) {
     const local = getLocalBenchmarks();
     const newRun: BenchmarkRunRecord = {
       ...payload,
@@ -334,11 +331,7 @@ export async function saveBenchmarkRun(
     return newRun;
   }
 
-  const { data, error } = await supabase
-    .from('benchmark_runs')
-    .insert([payload])
-    .select()
-    .single();
+  const { data, error } = await supabase.from('benchmark_runs').insert([payload]).select().single();
 
   if (error) throw error;
   return data as BenchmarkRunRecord;
@@ -348,7 +341,7 @@ export async function saveBenchmarkRun(
  * List benchmark runs
  */
 export async function listBenchmarkRuns(userId?: string | null): Promise<BenchmarkRunRecord[]> {
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !userId) {
     const local = getLocalBenchmarks();
     if (userId) {
       return local.filter((b) => b.user_id === userId);
@@ -356,10 +349,7 @@ export async function listBenchmarkRuns(userId?: string | null): Promise<Benchma
     return local;
   }
 
-  let query = supabase
-    .from('benchmark_runs')
-    .select('*')
-    .order('created_at', { ascending: false });
+  let query = supabase.from('benchmark_runs').select('*').order('created_at', { ascending: false });
 
   if (userId) {
     query = query.eq('user_id', userId);
