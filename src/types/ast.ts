@@ -90,6 +90,7 @@ export interface BaseASTNode {
   span: ASTSpan;
   children: ASTNode[];
   repaired?: boolean;
+  active?: boolean;
 }
 
 export interface ProgramNode extends BaseASTNode {
@@ -280,6 +281,8 @@ export interface ParseTraceStep {
   depth: number;
   stack: string[];
   lookahead: string;
+  nodeId?: string;
+  event: 'enter' | 'consume' | 'exit' | 'error' | 'recover';
 }
 
 export interface ParseResult {
@@ -288,6 +291,7 @@ export interface ParseResult {
   errors: ParseError[];
   diagnostics: SyntaxDiagnostic[];
   trace: ParseTraceStep[];
+  traceTruncated?: boolean;
   success: boolean;
   isRepaired?: boolean;
 }

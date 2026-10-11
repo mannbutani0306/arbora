@@ -7,7 +7,59 @@
  * - Tree max depth calculation
  */
 
-import { ASTNode } from '../types/ast';
+import { ASTNode, ParseTraceStep } from '../types/ast';
+
+export function findNodeAtPosition(
+  ast: ASTNode,
+  line: number,
+  col: number
+): ASTNode | null {
+  let deepest: ASTNode | null = null;
+  let deepestLevel = -1;
+  function visit(node: ASTNode, level: number): void {
+    const { span } = node;
+    const afterStart =
+      line > span.startLine || (line === span.startLine && col >= span.startCol);
+    const beforeEnd =
+      line < span.endLine || (line === span.endLine && col <= span.endCol);
+    if (!afterStart || !beforeEnd) return;
+    if (level > deepestLevel) {
+      deepest = node;
+      deepestLevel = level;
+    }
+    for (const child of node.children ?? []) visit(child, level + 1);
+  }
+  visit(ast, 0);
+  return deepest;
+}
+
+export function buildTreeAtStep(
+  ast: ASTNode,
+  trace: ParseTraceStep[],
+  stepIndex: number
+): ASTNode {
+  const entered = new Set<string>([ast.id]);
+  const active: string[] = [];
+  for (const step of trace.slice(0, Math.max(0, stepIndex + 1))) {
+    if (!step.nodeId) continue;
+    if (step.event === 'enter') {
+      entered.add(step.nodeId);
+      active.push(step.nodeId);
+    } else if (step.event === 'exit') {
+      const index = active.lastIndexOf(step.nodeId);
+      if (index >= 0) active.splice(index, 1);
+    }
+  }
+  const activeId = active.at(-1);
+  const cloneVisible = (node: ASTNode): ASTNode | null => {
+    if (!entered.has(node.id)) return null;
+    const children = (node.children ?? [])
+      .map(cloneVisible)
+      .filter((child): child is ASTNode => child !== null);
+    return { ...node, active: node.id === activeId, children } as ASTNode;
+  };
+  return cloneVisible(ast) ?? { ...ast, active: false, children: [] };
+}
 
 export function countNodes(node: ASTNode): number {
   if (!node) return 0;

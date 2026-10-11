@@ -3,7 +3,7 @@ import Editor, { Monaco, OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { parse } from '../core/parser';
 import { lex } from '../core/lexer';
-import { countNodes, getMaxDepth } from '../core/astUtils';
+import { countNodes, findNodeAtPosition, getMaxDepth } from '../core/astUtils';
 import { Token, ParseError, ParseResult } from '../types/ast';
 import { useAuth } from '../lib/AuthContext';
 import { useToast } from '../lib/toast';
@@ -59,6 +59,7 @@ import { CompareView } from '../components/CompareView';
 import { ExplainView } from '../components/ExplainView';
 import { MetricsView } from '../components/MetricsView';
 import { InteractiveAstTree } from '../components/InteractiveAstTree';
+import { TracePlayer } from '../components/ast/TracePlayer';
 import { ReportModal } from '../components/ReportModal';
 import { OnboardingTour } from '../components/OnboardingTour';
 import { CommandPalette } from '../components/CommandPalette';
@@ -535,6 +536,16 @@ export function Playground() {
     monacoRef.current.editor.setModelMarkers(model, 'minic-parser', markers);
   }, [parseResult]);
 
+  useEffect(() => {
+    const editorInstance = editorRef.current;
+    if (!editorInstance || !parseResult?.ast) return;
+    const disposable = editorInstance.onDidChangeCursorPosition(({ position }) => {
+      const node = findNodeAtPosition(parseResult.ast, position.lineNumber, position.column);
+      if (node) setSelectedNodeForExplanation(node);
+    });
+    return () => disposable.dispose();
+  }, [parseResult]);
+
   // Editor Mount
   const handleEditorDidMount: OnMount = (editorInstance, monacoInstance) => {
     editorRef.current = editorInstance;
@@ -619,6 +630,27 @@ export function Playground() {
         }
       }, 1800);
     }
+  };
+
+  const jumpToAstNode = (line: number, column: number, endLine = line, endColumn = column + 1) => {
+    if (!editorRef.current || !monacoRef.current) return;
+    const startLine = Math.max(1, line);
+    const startColumn = Math.max(1, column);
+    const finishLine = Math.max(startLine, endLine);
+    const finishColumn = finishLine === startLine
+      ? Math.max(startColumn + 1, endColumn)
+      : Math.max(1, endColumn);
+    const range = new monacoRef.current.Range(startLine, startColumn, finishLine, finishColumn);
+    editorRef.current.revealRangeInCenter(range);
+    editorRef.current.setSelection(range);
+    editorRef.current.focus();
+    decorationsRef.current = editorRef.current.deltaDecorations(decorationsRef.current, [{
+      range,
+      options: {
+        className: 'bg-emerald-100/70 border-b border-emerald-600',
+        inlineClassName: 'font-semibold text-emerald-900',
+      },
+    }]);
   };
 
   // Highlight token span on table row hover
@@ -1482,18 +1514,14 @@ export function Playground() {
               </div>
             )}
 
-            {/* TAB: TRACE (One-line empty state) */}
+            {/* TAB: TRACE */}
             {activeTab === 'Trace' && (
-              <div className="bg-white rounded-xl border border-[#E7E5E4] p-8 text-center shadow-xs">
-                <p className="text-xs text-[#78716C] mb-3">Trace steps are available for execution visualization.</p>
-                <button
-                  type="button"
-                  onClick={handleImmediateRun}
-                  className="px-3 py-1.5 bg-[#059669] hover:bg-[#047857] text-white text-xs font-medium rounded-lg"
-                >
-                  Generate Trace
-                </button>
-              </div>
+              parseResult
+                ? <TracePlayer parseResult={parseResult} onJumpToSource={jumpToAstNode} />
+                : <div className="rounded-xl border border-[#E7E5E4] bg-white p-8 text-center shadow-xs">
+                    <p className="mb-3 text-xs text-[#78716C]">Run the parser to build a step-by-step trace.</p>
+                    <button type="button" onClick={handleImmediateRun} className="rounded-lg bg-[#059669] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#047857]">Parse Program</button>
+                  </div>
             )}
 
             {/* TAB: AST */}
@@ -1528,22 +1556,16 @@ export function Playground() {
                     </button>
                   </div>
                 ) : (
-                  <div className="max-h-[600px] overflow-auto font-mono text-xs">
-                    <InteractiveAstTree
-                      node={parseResult.ast}
-                      selectedNodeId={selectedNodeForExplanation?.id}
-                      onSelectNode={(node) => {
-                        setSelectedNodeForExplanation(node);
-                        if (node.span) {
-                          jumpToLocation(node.span.startLine, node.span.startCol);
-                        }
-                      }}
-                      onExplainNode={(node) => {
-                        setSelectedNodeForExplanation(node);
-                        setActiveTab('Explain');
-                      }}
-                    />
-                  </div>
+                  <InteractiveAstTree
+                    node={parseResult.ast}
+                    selectedNodeId={selectedNodeForExplanation?.id}
+                    onSelectNode={setSelectedNodeForExplanation}
+                    onJumpToSource={jumpToAstNode}
+                    onExplainNode={(node) => {
+                      setSelectedNodeForExplanation(node);
+                      setActiveTab('Explain');
+                    }}
+                  />
                 )}
               </div>
             )}

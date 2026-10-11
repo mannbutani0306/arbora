@@ -437,6 +437,7 @@ describe('MiniC Recursive-Descent Parser & Grammar', () => {
       const result = parse(code);
 
       expect(result.trace.length).toBeGreaterThan(0);
+      expect(result.trace.every((step) => ['enter', 'consume', 'exit', 'error', 'recover'].includes(step.event))).toBe(true);
       const rules = result.trace.map((s) => s.ruleApplied);
       expect(rules).toContain('Enter Program');
       expect(rules).toContain('Enter FunctionDecl');
@@ -446,6 +447,19 @@ describe('MiniC Recursive-Descent Parser & Grammar', () => {
       expect(traceItem).toBeDefined();
       expect(traceItem?.depth).toBeGreaterThanOrEqual(1);
       expect(traceItem?.stack).toContain('Program');
+      expect(result.trace.some((step) => step.event === 'consume' && step.tokenConsumed)).toBe(true);
+      expect(result.trace.some((step) => step.event === 'exit')).toBe(true);
+    });
+
+    it('marks trace truncation and retains recovery events', () => {
+      const longCode = `int main() {\n${Array.from({ length: 1_800 }, (_, index) => `  int value${index} = ${index};`).join('\n')}\n  return 0;\n}`;
+      const result = parse(longCode);
+      expect(result.trace).toHaveLength(5_000);
+      expect(result.traceTruncated).toBe(true);
+
+      const recovered = parse('int main() { int value = 1 return value; }');
+      expect(recovered.trace.some((step) => step.event === 'error')).toBe(true);
+      expect(recovered.trace.some((step) => step.event === 'recover')).toBe(true);
     });
   });
 

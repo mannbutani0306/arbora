@@ -86,6 +86,8 @@ export class Parser {
   private trace: ParseTraceStep[] = [];
   private ruleStack: string[] = [];
   private nextNodeId: number = 1;
+  private traceTruncated = false;
+  private lastNodeId: string | undefined;
 
   constructor(tokens: Token[] = []) {
     this.tokens = tokens;
@@ -141,6 +143,7 @@ export class Parser {
       errors: this.errors,
       diagnostics: this.diagnostics,
       trace: this.trace,
+      traceTruncated: this.traceTruncated,
       success: this.errors.length === 0,
     };
   }
@@ -152,10 +155,15 @@ export class Parser {
     this.trace = [];
     this.ruleStack = [];
     this.nextNodeId = 1;
+    this.traceTruncated = false;
+    this.lastNodeId = undefined;
   }
 
   private genId(prefix: string): string {
-    return `${prefix}_${this.nextNodeId++}`;
+    const id = `${prefix}_${this.nextNodeId++}`;
+    this.lastNodeId = id;
+    this.recordTrace(`Create ${prefix} node`, undefined, 'enter', id);
+    return id;
   }
 
   private peek(): Token {
@@ -181,6 +189,8 @@ export class Parser {
   private advance(): Token {
     if (!this.isAtEnd()) {
       this.current++;
+      const consumed = this.previous();
+      this.recordTrace(`Consume '${consumed.lexeme}'`, consumed.lexeme, 'consume', this.lastNodeId);
     }
     return this.previous();
   }
@@ -228,6 +238,8 @@ export class Parser {
         suggestion: expected.length > 0 ? `Expected '${expected.join("' or '")}'` : undefined,
       });
     }
+    this.recordTrace(message, found, 'error', this.lastNodeId);
+    this.recordTrace(recoveryAction, undefined, 'recover', this.lastNodeId);
 
     return errorObj;
   }
@@ -356,8 +368,16 @@ export class Parser {
     }
   }
 
-  private recordTrace(ruleApplied: string, tokenConsumed?: string): void {
-    if (this.trace.length >= MAX_TRACE_STEPS) return;
+  private recordTrace(
+    ruleApplied: string,
+    tokenConsumed?: string,
+    event: ParseTraceStep['event'] = 'consume',
+    nodeId?: string
+  ): void {
+    if (this.trace.length >= MAX_TRACE_STEPS) {
+      this.traceTruncated = true;
+      return;
+    }
     const lookahead = this.peek();
     this.trace.push({
       stepIndex: this.trace.length,
@@ -366,18 +386,20 @@ export class Parser {
       depth: this.ruleStack.length,
       stack: [...this.ruleStack],
       lookahead: lookahead ? `${lookahead.type}(${lookahead.lexeme})` : 'EOF',
+      nodeId,
+      event,
     });
   }
 
   private enterRule(rule: string): void {
     this.ruleStack.push(rule);
-    this.recordTrace(`Enter ${rule}`);
+    this.recordTrace(`Enter ${rule}`, undefined, 'enter', this.lastNodeId);
   }
 
   private exitRule(): void {
     const popped = this.ruleStack.pop();
     if (popped) {
-      this.recordTrace(`Exit ${popped}`);
+      this.recordTrace(`Exit ${popped}`, undefined, 'exit', this.lastNodeId);
     }
   }
 
@@ -396,6 +418,7 @@ export class Parser {
 
   public parseProgram(): ProgramNode {
     this.enterRule('Program');
+    const programId = this.genId('prog');
     const startTok = this.peek();
     const declarations: ASTNode[] = [];
 
@@ -420,7 +443,7 @@ export class Parser {
     this.exitRule();
 
     return {
-      id: this.genId('prog'),
+      id: programId,
       type: 'Program',
       declarations,
       body: declarations,
