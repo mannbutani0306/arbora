@@ -130,6 +130,25 @@ test('built-in malformed samples display parser errors', async ({ page }) => {
   }
 });
 
+test('uploaded C source with includes parses before repair is requested', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto('/playground', { waitUntil: 'commit' });
+  const upload = page.locator('input[type="file"]');
+  await expect(upload).toBeAttached();
+  await upload.setInputFiles({
+    name: 'valid_string.c',
+    mimeType: 'text/x-c',
+    buffer: Buffer.from(
+      '#include <stdio.h>\n#include <ctype.h>\nint main() { char ident[50]; int flag = 1, i = 0; printf("Enter an identifier: "); scanf("%s", ident); return 0; }',
+    ),
+  });
+
+  await expect(page.getByText('Parse successful')).toBeVisible();
+  await page.getByRole('tab', { name: 'Errors' }).click();
+  await expect(page.getByText('No parser errors found.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Find repairs' })).toHaveCount(0);
+});
+
 test('Research and Benchmarks render with committed/offline fallbacks', async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto('/research', { waitUntil: 'commit' });

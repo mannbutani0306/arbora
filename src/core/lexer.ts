@@ -236,6 +236,24 @@ export class Lexer {
       return;
     }
 
+    if (ch === '#') {
+      const lineStart = this.source.lastIndexOf('\n', this.index - 1) + 1;
+      const linePrefix = this.source.slice(lineStart, this.index);
+      const directive = this.source.slice(this.index);
+      if (/^[ \t]*$/.test(linePrefix) && /^#[ \t]*include(?:[ \t<"])/.test(directive)) {
+        while (!this.isAtEnd() && this.peek() !== '\n') this.advance();
+        this.addTraceStep(
+          'PREPROCESSOR',
+          'Skipped #include directive',
+          { start, end: this.index },
+          undefined,
+          startLine,
+          startColumn
+        );
+        return;
+      }
+    }
+
     // 2. Comments or Division Operator
     if (ch === '/') {
       if (this.peekNext() === '/') {

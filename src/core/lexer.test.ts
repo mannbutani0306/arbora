@@ -10,6 +10,27 @@ describe('MiniC Lexer', () => {
       .map((t) => ({ type: t.type, lexeme: t.lexeme }));
 
   describe('1. Valid MiniC Language Constructs', () => {
+    it('skips standard include directives without changing source locations', () => {
+      const res = lex('#include <stdio.h>\nint main() { return 0; }');
+
+      expect(res.errors).toHaveLength(0);
+      expect(simplify(res.tokens).map(({ lexeme }) => lexeme)).toEqual([
+        'int',
+        'main',
+        '(',
+        ')',
+        '{',
+        'return',
+        '0',
+        ';',
+        '}',
+      ]);
+      expect(res.tokens[0].line).toBe(2);
+      expect(res.trace.some(({ state, action }) =>
+        state === 'PREPROCESSOR' && action === 'Skipped #include directive'
+      )).toBe(true);
+    });
+
     it('tokenizes all MiniC primitive types and variable declarations', () => {
       const code = `
         int count = 10;

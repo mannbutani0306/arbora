@@ -75,6 +75,49 @@ describe('MiniC Recursive-Descent Parser & Grammar', () => {
       expect(v4.arraySize).toBeUndefined();
     });
 
+    it('parses comma-separated variable declarations with include directives', () => {
+      const code = `#include <stdio.h>
+#include <ctype.h>
+
+int main() {
+    char ident[50];
+    int flag = 1, i = 0;
+    printf("Enter an identifier: ");
+    scanf("%s", ident);
+    if (!(isalpha(ident[0]) || ident[0] == '_')) {
+        flag = 0;
+    } else {
+        for (i = 1; ident[i] != '\\0'; i++) {
+            if (!(isalnum(ident[i]) || ident[i] == '_')) {
+                flag = 0;
+                break;
+            }
+        }
+    }
+    if (flag == 1)
+        printf("Valid Identifier\\n");
+    else
+        printf("Not a Valid Identifier\\n");
+    return 0;
+}`;
+      const result = parse(code);
+
+      expect(result.errors).toEqual([]);
+      const main = result.ast.declarations[0] as FunctionDeclNode;
+      expect(main.body.statements.map((statement) => statement.type)).toEqual([
+        'VarDecl',
+        'VarDecl',
+        'VarDecl',
+        'ExprStmt',
+        'ExprStmt',
+        'IfStmt',
+        'IfStmt',
+        'ReturnStmt',
+      ]);
+      expect((main.body.statements[1] as VarDeclNode).name).toBe('flag');
+      expect((main.body.statements[2] as VarDeclNode).name).toBe('i');
+    });
+
     it('parses functions with array parameters', () => {
       const code = 'void sort(int arr[], int n) { return; }';
       const result = parse(code);

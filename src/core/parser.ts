@@ -464,7 +464,7 @@ export class Parser {
       try {
         const decl = this.parseTopLevelItem();
         if (decl) {
-          declarations.push(decl);
+          declarations.push(...(Array.isArray(decl) ? decl : [decl]));
         }
       } catch {
         this.synchronizeStatement();
@@ -489,7 +489,7 @@ export class Parser {
     };
   }
 
-  private parseTopLevelItem(): ASTNode | null {
+  private parseTopLevelItem(): ASTNode | ASTNode[] | null {
     const tok = this.peek();
 
     if (tok.type === 'KEYWORD' && TYPE_KEYWORDS.has(tok.lexeme)) {
@@ -522,7 +522,7 @@ export class Parser {
       if (this.check('DELIMITER', '(')) {
         return this.parseFunctionDecl(typeTok, idTok);
       } else {
-        return this.parseVarDeclTail(typeTok, idTok);
+        return this.parseVarDeclListTail(typeTok, idTok);
       }
     }
 
@@ -651,7 +651,42 @@ export class Parser {
     };
   }
 
+  private parseVarDeclListTail(typeTok: Token, idTok: Token): VarDeclNode[] {
+    const declarations = [this.parseVarDeclarator(typeTok, idTok, typeTok)];
+    while (this.match('DELIMITER', ',')) {
+      if (!this.check('IDENTIFIER')) {
+        this.recordError(
+          'ERR_EXPECTED_IDENTIFIER',
+          'Expected variable name after comma',
+          this.peek().line,
+          this.peek().column,
+          ['IDENTIFIER'],
+          this.peek().lexeme || 'EOF',
+          'error',
+          'Stopped parsing variable declaration list',
+        );
+        break;
+      }
+      const nextId = this.advance();
+      declarations.push(this.parseVarDeclarator(typeTok, nextId, nextId));
+    }
+    this.matchOrInsertSemicolon('variable declaration');
+    const endTok = this.previous();
+    const lastDeclaration = declarations[declarations.length - 1];
+    if (lastDeclaration) {
+      lastDeclaration.span.endLine = endTok.line;
+      lastDeclaration.span.endCol = endTok.column + endTok.lexeme.length;
+    }
+    return declarations;
+  }
+
   private parseVarDeclTail(typeTok: Token, idTok: Token): VarDeclNode {
+    const declaration = this.parseVarDeclarator(typeTok, idTok, typeTok);
+    this.matchOrInsertSemicolon('variable declaration');
+    return declaration;
+  }
+
+  private parseVarDeclarator(typeTok: Token, idTok: Token, startTok: Token): VarDeclNode {
     this.enterRule('VarDecl');
     let isArray = false;
     let arraySize: ASTNode | undefined;
@@ -680,8 +715,7 @@ export class Parser {
       init = this.parseExpression();
     }
 
-    this.matchOrInsertSemicolon('variable declaration');
-    const span = this.makeSpan(typeTok, this.previous());
+    const span = this.makeSpan(startTok, this.previous());
     this.exitRule();
 
     const children: ASTNode[] = [];
@@ -725,9 +759,28 @@ export class Parser {
     while (!this.check('DELIMITER', '}') && !this.isAtEnd()) {
       const prevPos = this.current;
       try {
-        const stmt = this.parseStatement();
-        if (stmt) {
-          statements.push(stmt);
+        const tok = this.peek();
+        if (tok.type === 'KEYWORD' && TYPE_KEYWORDS.has(tok.lexeme)) {
+          const typeTok = this.advance();
+          if (!this.check('IDENTIFIER')) {
+            this.recordError(
+              'ERR_EXPECTED_IDENTIFIER',
+              `Expected variable name after '${typeTok.lexeme}'`,
+              this.peek().line,
+              this.peek().column,
+              ['IDENTIFIER'],
+              this.peek().lexeme,
+              'error',
+              'Created ErrorNode and skipped to sync boundary',
+            );
+            this.synchronizeStatement();
+          } else {
+            const idTok = this.advance();
+            statements.push(...this.parseVarDeclListTail(typeTok, idTok));
+          }
+        } else {
+          const stmt = this.parseStatement();
+          if (stmt) statements.push(stmt);
         }
       } catch {
         this.synchronizeStatement();
