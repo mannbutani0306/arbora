@@ -93,6 +93,11 @@ test('Playground sample, parsing, injection, and verified repair flow', async ({
   await expect(page.getByRole('heading', { name: 'Code, grown into trees.' })).toBeVisible();
   await page.getByRole('link', { name: /Open Playground/ }).click();
   await expect(page.getByRole('main')).toBeVisible();
+  const editor = page.locator('.monaco-editor');
+  await expect(editor.locator('.view-line').first()).toContainText('MiniC Sample Program');
+  await expect
+    .poll(() => editor.evaluate((element) => element.getBoundingClientRect().height))
+    .toBeGreaterThan(100);
   await page.getByLabel('Load sample').selectOption('sample_factorial');
   await page.getByRole('button', { name: 'Run', exact: true }).click();
   await expect(page.getByRole('tab', { name: /Tokens/ })).toBeVisible();

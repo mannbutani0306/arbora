@@ -84,7 +84,7 @@ export function PlaygroundWorkspace(props: PlaygroundWorkspaceProps) {
         className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row"
       >
         <div
-          className="min-h-0 min-w-0 flex-1 lg:flex-none"
+          className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-none"
           style={{ flexBasis: `${splitRatio}%` }}
         >
           <EditorPane
