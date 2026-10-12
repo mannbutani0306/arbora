@@ -54,6 +54,21 @@ const FALLBACK_SAMPLES: SampleRecord[] = [
     source_code: 'int compute(int x) {\n    if (x > 0 {\n        return x\n    }\n}',
     difficulty: 'Broken',
   },
+  {
+    id: 'sample_missing_semicolon',
+    title: 'Missing Semicolon',
+    category: 'Malformed',
+    source_code:
+      'int add(int left, int right) {\n    int sum = left + right\n    return sum;\n}',
+    difficulty: 'Broken',
+  },
+  {
+    id: 'sample_unexpected_token',
+    title: 'Unexpected Token',
+    category: 'Malformed',
+    source_code: 'int main() {\n    int value = 10;\n    return value + ;\n}',
+    difficulty: 'Broken',
+  },
 ];
 const RANDOM_INJECTION_TYPES: ErrorInjectionType[] = [
   'delete',

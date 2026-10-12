@@ -110,6 +110,26 @@ test('Playground sample, parsing, injection, and verified repair flow', async ({
   await expect(page.getByText('No parser errors found.')).toBeVisible();
 });
 
+test('built-in malformed samples display parser errors', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto('/', { waitUntil: 'commit' });
+  await expect(page.getByRole('heading', { name: 'Code, grown into trees.' })).toBeVisible();
+  await page.getByRole('link', { name: /Open Playground/ }).click();
+  await expect(page.getByRole('main')).toBeVisible();
+
+  for (const [sampleId, title] of [
+    ['sample_missing_semicolon', 'Missing Semicolon'],
+    ['sample_unexpected_token', 'Unexpected Token'],
+  ]) {
+    await page.getByLabel('Load sample').selectOption(sampleId);
+    await expect(page.getByLabel('Analysis title')).toHaveValue(title);
+    const errorsTab = page.getByRole('tab', { name: /Errors \(\d+\)/ });
+    await expect(errorsTab).toBeVisible();
+    await errorsTab.click();
+    await expect(page.getByRole('status').filter({ hasText: 'parser error' })).toBeVisible();
+  }
+});
+
 test('Research and Benchmarks render with committed/offline fallbacks', async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto('/research', { waitUntil: 'commit' });
