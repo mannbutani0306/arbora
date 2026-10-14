@@ -36,7 +36,7 @@
 
 Screenshots: [Playground](docs/media/playground.png) · [Benchmarks](docs/media/benchmarks.png). To regenerate the screenshot frames, start the app and run `npm run capture:media`; with `ffmpeg` installed it also writes `docs/media/hero.gif` and `docs/media/playground.gif`.
 
-## Quick links
+## Quick Links
 
 | | |
 |---|---|
