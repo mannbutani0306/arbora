@@ -12,17 +12,29 @@ import { lex } from '../core/lexer';
 import { parse } from '../core/parser';
 import { classicalRepair } from '../core/classicalRepair';
 
+const gateway = vi.hoisted(() => ({
+  callGateway: vi.fn(),
+  checkAiAvailability: vi.fn(),
+  isAiAvailable: vi.fn(),
+}));
+
 vi.mock('./gatewayClient', () => ({
   AppError: class AppError extends Error {
     constructor(public code: string, message: string) { super(message); }
   },
-  callGateway: vi.fn(),
-  isAiAvailable: () => false,
+  callGateway: gateway.callGateway,
+  checkAiAvailability: gateway.checkAiAvailability,
+  isAiAvailable: gateway.isAiAvailable,
 }));
+
+import { callGateway, checkAiAvailability, isAiAvailable } from './gatewayClient';
 
 describe('AI Repair Engine', () => {
   beforeEach(async () => {
     await clearRepairStats();
+    vi.clearAllMocks();
+    vi.mocked(isAiAvailable).mockReturnValue(false);
+    vi.mocked(checkAiAvailability).mockResolvedValue(false);
   });
 
   describe('Edit distance', () => {
@@ -95,6 +107,31 @@ describe('AI Repair Engine', () => {
       expect(ranked[0].repairedCode).toBe('int x = 5;');
       expect(ranked[0].editDistance).toBeLessThan(ranked[1].editDistance);
     });
+
+    it('drops empty proposals, filters malformed edits, and clamps confidence', () => {
+      const ranked = verifyAndRankCandidates(
+        [
+          { repairedCode: '  ' },
+          {
+            repairedCode: 'int x = 1;',
+            confidence: 2,
+            edits: [
+              { operation: 'mystery', text: 'x', line: 1, column: 1 },
+              { operation: 'insert', text: ';', line: 1, column: 10 },
+              { operation: 'insert', text: ';', column: 10 },
+            ],
+          },
+        ],
+        'int x = 1',
+      );
+
+      expect(ranked).toHaveLength(1);
+      expect(ranked[0].confidence).toBe(1);
+      expect(ranked[0].edits).toEqual([
+        { operation: 'insert', text: 'x', line: 1, column: 1 },
+        { operation: 'insert', text: ';', line: 1, column: 10 },
+      ]);
+    });
   });
 
   describe('Classical bounded repair', () => {
@@ -117,6 +154,97 @@ describe('AI Repair Engine', () => {
       expect(response.candidates.every((candidate) =>
         candidate.verified === (parse(candidate.repairedCode).errors.length === 0)
       )).toBe(true);
+    });
+
+    it('returns no candidates for already-valid input without contacting the model', async () => {
+      const response = await repairCode({
+        sourceCode: 'int main() { return 0; }',
+        tokens: lex('int main() { return 0; }').tokens,
+        errors: [],
+      });
+
+      expect(response.candidates).toEqual([]);
+      expect(response.message).toBeUndefined();
+      expect(callGateway).not.toHaveBeenCalled();
+    });
+
+    it('runs deterministic classical and n-gram engines directly', async () => {
+      const sourceCode = 'int run() { return 5 }';
+      const parsed = parse(sourceCode);
+      const classical = await repairCode({
+        sourceCode,
+        tokens: parsed.tokens,
+        errors: parsed.errors,
+        engine: 'classical',
+      });
+      const ngram = await repairCode({
+        sourceCode,
+        tokens: parsed.tokens,
+        errors: parsed.errors,
+        engine: 'ngram',
+      });
+
+      expect(classical.model).toBe('Classical');
+      expect(classical.fellBackToClassical).toBe(false);
+      expect(classical.candidates.some(({ verified }) => verified)).toBe(true);
+      expect(ngram.model).toBe('N-gram');
+      expect(ngram.candidates.every(({ engineId }) => engineId === 'ngram')).toBe(true);
+      expect(callGateway).not.toHaveBeenCalled();
+    });
+
+    it('accepts parser-verified Gemini proposals and retries unverified proposals once', async () => {
+      vi.mocked(isAiAvailable).mockReturnValue(true);
+      vi.mocked(callGateway)
+        .mockResolvedValueOnce({
+          candidates: [{ repairedCode: 'int main() { return 0; }', confidence: 0.95 }],
+        })
+        .mockResolvedValueOnce({
+          candidates: [{ repairedCode: 'int main() { return }', confidence: 0.9 }],
+        })
+        .mockResolvedValueOnce({
+          candidates: [{ repairedCode: 'int main() { return 0; }', confidence: 0.8 }],
+        });
+      const sourceCode = 'int main() { return 0 }';
+      const parsed = parse(sourceCode);
+
+      const valid = await repairCode({
+        sourceCode,
+        tokens: parsed.tokens,
+        errors: parsed.errors,
+      });
+      const retried = await repairCode({
+        sourceCode: `${sourceCode} `,
+        tokens: parsed.tokens,
+        errors: parsed.errors,
+      });
+
+      expect(valid.verifiedCandidate?.verified).toBe(true);
+      expect(valid.fellBackToClassical).toBe(false);
+      expect(retried.verifiedCandidate?.verified).toBe(true);
+      expect(callGateway).toHaveBeenCalledTimes(3);
+      expect(callGateway).toHaveBeenLastCalledWith(
+        'repair',
+        expect.objectContaining({
+          retryCandidate: 'int main() { return }',
+          retryErrors: expect.stringContaining('Expected'),
+        }),
+        { signal: undefined },
+      );
+    });
+
+    it('runs the ensemble and reports unavailable model engines', async () => {
+      const sourceCode = 'int run() { return 5 }';
+      const parsed = parse(sourceCode);
+      const response = await repairCode({
+        sourceCode,
+        tokens: parsed.tokens,
+        errors: parsed.errors,
+        engine: 'ensemble',
+      });
+
+      expect(response.model).toBe('Ensemble');
+      expect(response.candidates.length).toBeGreaterThan(0);
+      expect(response.candidates.every(({ agreedBy }) => (agreedBy?.length ?? 0) > 0)).toBe(true);
     });
 
     it('repairs a missing close parenthesis', () => {

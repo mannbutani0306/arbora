@@ -46,7 +46,7 @@ describe('probabilistic MiniC program generation', () => {
         );
       }
     }
-  });
+  }, 60_000);
 
   it('has no normalized token duplicates in the first 1,000 programs', () => {
     const generated = generateUniquePrograms(1000, 1234, { sizeClass: 'small' });

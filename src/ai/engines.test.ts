@@ -1,7 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRepairEngines, clearRepairEngineCache, mergeEnsembleCandidates } from './engines';
+import {
+  astEngines,
+  createRepairEngines,
+  clearRepairEngineCache,
+  mergeEnsembleCandidates,
+} from './engines';
 import type { RepairCandidate, RepairResponse } from './repair';
 import { verifyAndRankCandidates } from './repair';
+
+const { callGatewayMock } = vi.hoisted(() => ({
+  callGatewayMock: vi.fn(),
+}));
+
+vi.mock('./gatewayClient', () => ({ callGateway: callGatewayMock }));
+
+import { callGateway } from './gatewayClient';
 
 function candidate(
   id: string,
@@ -26,7 +39,10 @@ function candidate(
 }
 
 describe('repair engine orchestration helpers', () => {
-  afterEach(() => clearRepairEngineCache());
+  afterEach(() => {
+    clearRepairEngineCache();
+    vi.clearAllMocks();
+  });
 
   it('deduplicates normalized code and ranks verified consensus before confidence', () => {
     const shared = candidate('one', 'int main() { return 0; }', 'classical', true, 0.2);
@@ -67,5 +83,77 @@ describe('repair engine orchestration helpers', () => {
     expect(result).toHaveLength(1);
     expect(result[0].verified).toBe(false);
     expect(result[0].engineId).toBe('arbora-t5');
+  });
+
+  it('parses and caches a valid Arbora-T5 bracketed AST', async () => {
+    callGatewayMock.mockResolvedValue({
+      ast_bracketed: '(Program (FunctionDecl (Block (ReturnStmt))))',
+      is_valid: true,
+      latency_ms: 18,
+      model_id: 'fixture/ast',
+    });
+
+    const first = await astEngines['arbora-t5'].generate('int main() { return 0; }');
+    const second = await astEngines['arbora-t5'].generate('int main() { return 0; }');
+
+    expect(first.ast?.type).toBe('Program');
+    expect(first.ast?.children[0].id).toMatch(/^arbora_/);
+    expect(first.astBracketed).toContain('(Program');
+    expect(first.isValid).toBe(true);
+    expect(first.model).toBe('fixture/ast');
+    expect(second.latencyMs).toBe(0);
+    expect(callGateway).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not accept malformed or non-Program bracketed AST roots', async () => {
+    callGatewayMock
+      .mockResolvedValueOnce({
+        ast_bracketed: '(Program (FunctionDecl)',
+        is_valid: true,
+        latency_ms: 0,
+        model_id: 'fixture/ast',
+      })
+      .mockResolvedValueOnce({
+        ast_bracketed: '(FunctionDecl)',
+        is_valid: true,
+        latency_ms: 0,
+        model_id: 'fixture/ast',
+      });
+
+    const malformed = await astEngines['arbora-t5'].generate('malformed');
+    const wrongRoot = await astEngines['arbora-t5'].generate('wrong-root');
+
+    expect(malformed).toMatchObject({ ast: null, isValid: false });
+    expect(wrongRoot).toMatchObject({ ast: null, isValid: false });
+    expect(callGatewayMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches valid Gemini ASTs, but not invalid or aborted results', async () => {
+    const valid = {
+      type: 'Program',
+      span: { startLine: 1, startCol: 1, endLine: 1, endCol: 1 },
+      children: [],
+    };
+    callGatewayMock
+      .mockResolvedValueOnce(valid)
+      .mockResolvedValueOnce({ type: 'FunctionDecl' })
+      .mockResolvedValueOnce({ type: 'FunctionDecl' })
+      .mockResolvedValueOnce(valid)
+      .mockResolvedValueOnce(valid);
+
+    const first = await astEngines.gemini.generate('valid');
+    const cached = await astEngines.gemini.generate('valid');
+    const invalid = await astEngines.gemini.generate('invalid');
+    const controller = new AbortController();
+    controller.abort();
+    const uncached = await astEngines.gemini.generate('aborted', { signal: controller.signal });
+    await astEngines.gemini.generate('aborted', { signal: controller.signal });
+
+    expect(first.isValid).toBe(true);
+    expect(first.astBracketed).toBe('(Program)');
+    expect(cached.latencyMs).toBe(0);
+    expect(invalid).toMatchObject({ ast: null, isValid: false, astBracketed: null });
+    expect(uncached.isValid).toBe(true);
+    expect(callGatewayMock).toHaveBeenCalledTimes(5);
   });
 });

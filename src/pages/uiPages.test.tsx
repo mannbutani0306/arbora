@@ -40,6 +40,7 @@ import { History } from './History';
 import { Share } from './Share';
 import { Benchmarks } from './Benchmarks';
 import { Docs } from './Docs';
+import { Research } from './Research';
 
 const analysis = {
   id: 'analysis-1',
@@ -66,6 +67,7 @@ describe('React pages and shell', () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('shows the splash for two seconds once per session', () => {
@@ -189,6 +191,67 @@ describe('React pages and shell', () => {
     expect(await screen.findByText(/committed result files/)).toBeTruthy();
     expect(screen.getByRole('row', { name: /Fixture model/ })).toBeTruthy();
     expect(screen.getAllByText(/n_test: 4/).length).toBeGreaterThan(0);
+  });
+
+  it('renders validated research data and exports model rows in both formats', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          task: 'repair',
+          dataset: 'fixture',
+          n_test: 2,
+          models: {
+            'Measured baseline': {
+              metrics: {
+                top1_exact: { estimate: 0.5, lower: null, upper: null, n: 2 },
+              },
+              by_error_type: {},
+              by_size_bucket: {},
+              latency_ms: { mean: null, median: null, p95: null },
+              parameter_count: 10,
+              n_cases: 2,
+            },
+          },
+        }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          split_seed: 42,
+          train_programs: 8,
+          test_programs: 2,
+          metrics: {},
+        }), { status: 200 })),
+    );
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:research');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    renderRoute(<Research />);
+
+    expect(screen.getByText('Loading research results…')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Evidence for MiniC repair' })).toBeTruthy();
+    expect(screen.getByText('50.0%')).toBeTruthy();
+    expect(screen.getByText('Not reported')).toBeTruthy();
+    expect(screen.getByText('8')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(click).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a clear error when research data cannot be loaded', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('', { status: 503 })),
+    );
+
+    renderRoute(<Research />);
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Evaluation results unavailable (503).',
+    );
   });
 
   it('renders grammar documentation and is axe-clean', async () => {
